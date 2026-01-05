@@ -25,6 +25,7 @@ from .websocket import websocket_router
 from .knowledge_routes import router as knowledge_router
 from .exploitation_routes import router as exploitation_router
 from .security_routes import router as security_router
+from .infrastructure_routes import router as infrastructure_router
 
 # ═══════════════════════════════════════════════════════════════
 # SEC-03 & SEC-04: Security Middleware
@@ -202,6 +203,90 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # Store C2SessionManager in app state
     app.state.c2_manager = c2_manager
     
+    # ═══════════════════════════════════════════════════════════════
+    # INTEGRATION: Initialize OneProvider Cloud & SSH Infrastructure
+    # ═══════════════════════════════════════════════════════════════
+    vm_manager = None
+    ssh_manager = None
+    environment_manager = None
+    
+    if settings.oneprovider_enabled and settings.oneprovider_api_key:
+        try:
+            from ..infrastructure.cloud_provider import OneProviderClient, VMManager
+            logger.info("☁️ Initializing OneProvider Cloud Integration...")
+            
+            oneprovider_client = OneProviderClient(
+                api_key=settings.oneprovider_api_key,
+                client_key=settings.oneprovider_client_key,
+                timeout=30,
+                max_retries=3
+            )
+            
+            vm_manager = VMManager(
+                client=oneprovider_client,
+                default_project_uuid=settings.oneprovider_project_uuid
+            )
+            
+            logger.info(f"✅ OneProvider Cloud Integration Initialized")
+            logger.info(f"   Default Plan: {settings.oneprovider_default_plan}")
+            logger.info(f"   Default Location: {settings.oneprovider_default_location}")
+            
+        except Exception as e:
+            logger.error(f"❌ OneProvider initialization failed: {e}")
+            vm_manager = None
+    else:
+        logger.info("☁️ OneProvider Cloud Integration DISABLED")
+    
+    # Initialize SSH Connection Manager
+    if settings.ssh_enabled:
+        try:
+            from ..infrastructure.ssh.connection_manager import SSHConnectionManager, get_ssh_manager
+            logger.info("🔐 Initializing SSH Connection Manager...")
+            
+            ssh_manager = get_ssh_manager(max_connections=settings.ssh_max_connections)
+            
+            logger.info(f"✅ SSH Connection Manager Initialized")
+            logger.info(f"   Max Connections: {settings.ssh_max_connections}")
+            logger.info(f"   Keepalive Interval: {settings.ssh_keepalive_interval}s")
+            
+            # Register for graceful shutdown
+            shutdown_manager.register(
+                name="ssh_connection_manager",
+                shutdown_func=ssh_manager.shutdown,
+                priority=30,
+                timeout=15.0
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ SSH Connection Manager initialization failed: {e}")
+            ssh_manager = None
+    else:
+        logger.info("🔐 SSH Connection Manager DISABLED")
+    
+    # Initialize Environment Manager (combines VM + SSH)
+    if vm_manager or ssh_manager:
+        try:
+            from ..infrastructure.orchestrator import EnvironmentManager
+            logger.info("🌍 Initializing Environment Manager...")
+            
+            environment_manager = EnvironmentManager(
+                vm_manager=vm_manager,
+                max_environments_per_user=settings.agent_max_environments_per_user
+            )
+            
+            logger.info(f"✅ Environment Manager Initialized")
+            logger.info(f"   Max Environments/User: {settings.agent_max_environments_per_user}")
+            
+        except Exception as e:
+            logger.error(f"❌ Environment Manager initialization failed: {e}")
+            environment_manager = None
+    
+    # Store in app state
+    app.state.vm_manager = vm_manager
+    app.state.ssh_manager = ssh_manager
+    app.state.environment_manager = environment_manager
+    app.state.settings = settings
+    
     # Initialize Knowledge Base (in-memory, fast)
     knowledge = init_knowledge(data_path=settings.knowledge_data_path)
     app.state.knowledge = knowledge
@@ -343,6 +428,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_router, prefix="/api/v1")
     app.include_router(exploitation_router, prefix="/api/v1")
     app.include_router(security_router, prefix="/api/v1")  # SEC-03 & SEC-04 endpoints
+    app.include_router(infrastructure_router, prefix="/api/v1")  # SSH & Cloud Infrastructure
     app.include_router(websocket_router)
     
     return app
