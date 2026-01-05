@@ -139,6 +139,8 @@ class AttackSpecialist(BaseSpecialist):
         executor_factory: Optional['ExecutorFactory'] = None,
         strategic_scorer: Optional[StrategicScorer] = None,
         operational_memory: Optional[OperationalMemory] = None,
+        real_exploitation_engine: Optional[RealExploitationEngine] = None,
+        use_real_exploits: bool = False,
     ):
         super().__init__(
             specialist_type=SpecialistType.ATTACK,
@@ -148,6 +150,12 @@ class AttackSpecialist(BaseSpecialist):
             knowledge=knowledge,
             runner=runner,
             executor_factory=executor_factory
+        )
+        
+        # Real Exploitation Engine (NEW - replaces random.random())
+        self._use_real_exploits = use_real_exploits
+        self._real_exploitation_engine = real_exploitation_engine or (
+            get_real_exploitation_engine() if use_real_exploits else None
         )
         
         # Task types this specialist handles
@@ -1561,6 +1569,83 @@ class AttackSpecialist(BaseSpecialist):
             f"with credential reliability {cred_reliability:.2f} (source: {cred_source})"
         )
         
+        # ═══════════════════════════════════════════════════════════════
+        # REAL EXPLOITATION MODE: Use RealExploitationEngine
+        # ═══════════════════════════════════════════════════════════════
+        if self._use_real_exploits and self._real_exploitation_engine:
+            self.logger.info("[REAL EXPLOIT] Using RealExploitationEngine for credential-based exploitation")
+            
+            # Determine service from target ports
+            target_ports = await self.blackboard.get_target_ports(target_id)
+            service = self._determine_service_for_cred(target_ports)
+            
+            # Execute real credential exploit
+            exploit_result = await self._real_exploitation_engine.execute_credential_exploit(
+                target_host=target_ip,
+                target_port=target.get("port", 22),  # Default to SSH
+                target_os=target.get("os", "unknown"),
+                username=username,
+                password=cred.get("password"),
+                ssh_key=cred.get("ssh_key"),
+                service=service
+            )
+            
+            success = exploit_result.get("success", False)
+            
+            if success:
+                session_type = SessionType[exploit_result.get("session_type", "SSH").upper()]
+                
+                # Create session
+                session_id = await self.add_established_session(
+                    target_id=target_id,
+                    session_type=session_type,
+                    user=username,
+                    privilege=PrivilegeLevel(cred.get("privilege_level", "user")),
+                    via_cred_id=cred_id if self._is_valid_uuid(str(cred_id)) else None
+                )
+                
+                await self.blackboard.update_target_status(target_id, TargetStatus.EXPLOITED)
+                await self._verify_credential(cred_id)
+                
+                # Create follow-up tasks
+                if cred.get("privilege_level") in ("user", "unknown"):
+                    await self.create_task(
+                        task_type=TaskType.PRIVESC,
+                        target_specialist=SpecialistType.ATTACK,
+                        priority=8,
+                        target_id=target_id,
+                        session_id=session_id
+                    )
+                else:
+                    await self.create_task(
+                        task_type=TaskType.CRED_HARVEST,
+                        target_specialist=SpecialistType.ATTACK,
+                        priority=7,
+                        target_id=target_id,
+                        session_id=session_id
+                    )
+                
+                return {
+                    "success": True,
+                    "exploit_type": "intel_credential_real",
+                    "session_id": session_id,
+                    "username": username,
+                    "session_type": session_type.value,
+                    "intel_source": cred_source,
+                    "reliability_score": cred_reliability,
+                    "execution_mode": exploit_result.get("execution_mode")
+                }
+            else:
+                self.logger.info(
+                    f"Real credential exploit failed for {target_ip}, "
+                    f"reason: {exploit_result.get('reason')}"
+                )
+                return await self._execute_standard_exploit(task)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # SIMULATION MODE: Use random success rate (backward compatibility)
+        # ═══════════════════════════════════════════════════════════════
+        
         # Higher success rate for intel credentials
         # Reliability score directly affects success probability
         import random
@@ -1784,6 +1869,21 @@ class AttackSpecialist(BaseSpecialist):
                 return port_session_map[port]
         
         return "shell"  # Default
+    
+    def _determine_service_for_cred(self, ports: Dict[str, str]) -> str:
+        """Determine service type based on target ports (for RealExploitationEngine)"""
+        port_service_map = {
+            22: "ssh",
+            445: "smb",
+            3389: "rdp",
+        }
+        
+        for port_str in ports.keys():
+            port = int(port_str)
+            if port in port_service_map:
+                return port_service_map[port]
+        
+        return "ssh"  # Default
     
     def _is_valid_uuid(self, uuid_str: str) -> bool:
         """Check if string is a valid UUID."""
