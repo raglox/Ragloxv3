@@ -67,6 +67,58 @@ class Settings(BaseSettings):
     )
     
     # ═══════════════════════════════════════════════════════════
+    # REL-01: Redis High Availability Settings
+    # ═══════════════════════════════════════════════════════════
+    redis_mode: str = Field(
+        default="standalone",
+        description="Redis mode: standalone, sentinel, cluster"
+    )
+    redis_sentinel_hosts: str = Field(
+        default="",
+        description="Comma-separated list of Sentinel hosts (host:port,host:port)"
+    )
+    redis_sentinel_master: str = Field(
+        default="mymaster",
+        description="Sentinel master name"
+    )
+    redis_cluster_nodes: str = Field(
+        default="",
+        description="Comma-separated list of cluster nodes (host:port,host:port)"
+    )
+    redis_health_check_interval: int = Field(
+        default=30,
+        description="Redis health check interval in seconds"
+    )
+    redis_reconnect_max_attempts: int = Field(
+        default=10,
+        description="Maximum Redis reconnection attempts"
+    )
+    redis_socket_timeout: float = Field(
+        default=5.0,
+        description="Redis socket timeout in seconds"
+    )
+    
+    # ═══════════════════════════════════════════════════════════
+    # REL-02: Approval Persistence Settings
+    # ═══════════════════════════════════════════════════════════
+    approval_ttl_pending: int = Field(
+        default=86400,
+        description="TTL for pending approvals in seconds (24 hours)"
+    )
+    approval_ttl_completed: int = Field(
+        default=604800,
+        description="TTL for completed approvals in seconds (7 days)"
+    )
+    chat_history_ttl: int = Field(
+        default=2592000,
+        description="TTL for chat history in seconds (30 days)"
+    )
+    approval_audit_ttl: int = Field(
+        default=7776000,
+        description="TTL for approval audit logs in seconds (90 days)"
+    )
+    
+    # ═══════════════════════════════════════════════════════════
     # PostgreSQL
     # ═══════════════════════════════════════════════════════════
     database_url: str = Field(
