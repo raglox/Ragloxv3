@@ -26,6 +26,7 @@ from .knowledge_routes import router as knowledge_router
 from .exploitation_routes import router as exploitation_router
 from .security_routes import router as security_router
 from .infrastructure_routes import router as infrastructure_router
+from .workflow_routes import router as workflow_router
 
 # ═══════════════════════════════════════════════════════════════
 # SEC-03 & SEC-04: Security Middleware
@@ -429,6 +430,7 @@ def create_app() -> FastAPI:
     app.include_router(exploitation_router, prefix="/api/v1")
     app.include_router(security_router, prefix="/api/v1")  # SEC-03 & SEC-04 endpoints
     app.include_router(infrastructure_router, prefix="/api/v1")  # SSH & Cloud Infrastructure
+    app.include_router(workflow_router, prefix="/api/v1")  # Advanced Workflow Orchestration
     app.include_router(websocket_router)
     
     return app
