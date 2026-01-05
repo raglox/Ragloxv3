@@ -232,7 +232,19 @@ class MissionController:
         
         # Start Session Manager for this mission
         await self.session_manager.start()
-        self.logger.info(f\"SessionManager started for mission {mission_id}\")\n        \n        # Start Stats Manager for real-time metrics\n        await self.stats_manager.start()\n        self.logger.info(\"StatsManager started for real-time monitoring\")\n        \n        # Update mission start metric\n        await self.stats_manager.increment_counter(\n            \"missions_total\",\n            labels={\"status\": \"started\"}\n        )\n        \n        # Update status to running
+        self.logger.info(f"SessionManager started for mission {mission_id}")
+        
+        # Start Stats Manager for real-time metrics
+        await self.stats_manager.start()
+        self.logger.info("StatsManager started for real-time monitoring")
+        
+        # Update mission start metric
+        await self.stats_manager.increment_counter(
+            "missions_total",
+            labels={"status": "started"}
+        )
+        
+        # Update status to running
         await self.blackboard.update_mission_status(mission_id, MissionStatus.RUNNING)
         
         # Update local tracking

@@ -24,6 +24,13 @@ from .routes import router
 from .websocket import websocket_router
 from .knowledge_routes import router as knowledge_router
 from .exploitation_routes import router as exploitation_router
+from .security_routes import router as security_router
+
+# ═══════════════════════════════════════════════════════════════
+# SEC-03 & SEC-04: Security Middleware
+# ═══════════════════════════════════════════════════════════════
+from .middleware.rate_limit_middleware import RateLimitMiddleware
+from .middleware.validation_middleware import ValidationMiddleware
 
 # ═══════════════════════════════════════════════════════════════
 # INTEGRATION: Shutdown Manager
@@ -308,10 +315,34 @@ def create_app() -> FastAPI:
         max_age=3600,  # Cache preflight response for 1 hour
     )
     
+    # ═══════════════════════════════════════════════════════════════
+    # SEC-03: Input Validation Middleware
+    # ═══════════════════════════════════════════════════════════════
+    app.add_middleware(
+        ValidationMiddleware,
+        check_xss=True,
+        check_sql=True,
+        check_command=True,
+        check_path=True,
+        max_body_size=10 * 1024 * 1024,  # 10MB
+        enabled=settings.security_validation_enabled if hasattr(settings, 'security_validation_enabled') else True,
+    )
+    logger.info("🔒 SEC-03: Input Validation Middleware enabled")
+    
+    # ═══════════════════════════════════════════════════════════════
+    # SEC-04: Rate Limiting Middleware
+    # ═══════════════════════════════════════════════════════════════
+    app.add_middleware(
+        RateLimitMiddleware,
+        enabled=settings.rate_limiting_enabled if hasattr(settings, 'rate_limiting_enabled') else True,
+    )
+    logger.info("🚦 SEC-04: Rate Limiting Middleware enabled")
+    
     # Include routers
     app.include_router(router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
     app.include_router(exploitation_router, prefix="/api/v1")
+    app.include_router(security_router, prefix="/api/v1")  # SEC-03 & SEC-04 endpoints
     app.include_router(websocket_router)
     
     return app

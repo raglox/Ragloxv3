@@ -43,6 +43,9 @@ from ..core.intelligence_decision_engine import (
 if TYPE_CHECKING:
     from ..executors import RXModuleRunner, ExecutorFactory
 
+# Import RealExploitationEngine and its getter
+from .attack_integration import RealExploitationEngine, get_real_exploitation_engine
+
 
 class AttackSpecialist(BaseSpecialist):
     """
