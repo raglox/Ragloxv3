@@ -82,6 +82,10 @@ class MissionController:
             "attack": [],
         }
         
+        # Thread-safety locks
+        self._specialist_lock = asyncio.Lock()  # Lock for specialist initialization
+        self._c2_managers_lock = asyncio.Lock()  # Lock for C2 manager access
+        
         # Monitor interval (seconds)
         self._monitor_interval = 5
         
@@ -449,58 +453,76 @@ class MissionController:
     # ═══════════════════════════════════════════════════════════
     
     async def _start_specialists(self, mission_id: str) -> None:
-        """Start specialist workers for a mission."""
+        """
+        Start specialist workers for a mission.
+        
+        Uses async lock to prevent race conditions when multiple missions
+        start concurrently. Ensures thread-safe initialization of:
+        - Recon and Attack specialists
+        - Real Exploitation Engine (singleton)
+        - C2 Session Manager (per mission)
+        """
         self.logger.info(f"Starting specialists for mission {mission_id}")
         
-        # Create and start Recon specialist
-        # Each specialist gets its own Blackboard instance to avoid connection conflicts
-        recon = ReconSpecialist(
-            blackboard=Blackboard(settings=self.settings),
-            settings=self.settings
-        )
-        await recon.start(mission_id)
-        self._specialists["recon"].append(recon)
-        
-        # Create and start Attack specialist
-        # Initialize Real Exploitation Engine if enabled
-        real_exploitation_engine = None
-        c2_manager = None
-        use_real_exploits = False
-        
-        if self.settings.use_real_exploits:
-            try:
-                from ..specialists.attack_integration import get_real_exploitation_engine
-                from ..exploitation.c2.session_manager import C2SessionManager
-                
-                real_exploitation_engine = get_real_exploitation_engine()
-                
-                # Initialize C2SessionManager if not already available
-                c2_manager = C2SessionManager(
-                    encryption_enabled=self.settings.c2_encryption_enabled,
-                    data_dir=self.settings.c2_data_dir
-                )
-                
-                use_real_exploits = True
-                self.logger.info("🎯 Attack specialist using REAL EXPLOITATION")
-                self.logger.info(f"🌐 C2 Session Manager initialized for mission {mission_id}")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize real exploitation: {e}")
-                self.logger.warning("Attack specialist falling back to SIMULATION mode")
-        
-        attack = AttackSpecialist(
-            blackboard=Blackboard(settings=self.settings),
-            settings=self.settings,
-            use_real_exploits=use_real_exploits,
-            real_exploitation_engine=real_exploitation_engine
-        )
-        await attack.start(mission_id)
-        self._specialists["attack"].append(attack)
-        
-        # Store C2SessionManager reference for cleanup
-        if c2_manager:
-            if not hasattr(self, '_c2_managers'):
-                self._c2_managers = {}
-            self._c2_managers[mission_id] = c2_manager
+        # Use lock to prevent race conditions during specialist initialization
+        async with self._specialist_lock:
+            # Create and start Recon specialist
+            # Each specialist gets its own Blackboard instance to avoid connection conflicts
+            recon = ReconSpecialist(
+                blackboard=Blackboard(settings=self.settings),
+                settings=self.settings
+            )
+            await recon.start(mission_id)
+            self._specialists["recon"].append(recon)
+            
+            # Create and start Attack specialist
+            # Initialize Real Exploitation Engine if enabled
+            real_exploitation_engine = None
+            c2_manager = None
+            use_real_exploits = False
+            
+            if self.settings.use_real_exploits:
+                try:
+                    from ..specialists.attack_integration import get_real_exploitation_engine
+                    from ..exploitation.c2.session_manager import C2SessionManager
+                    
+                    # get_real_exploitation_engine() is already a singleton
+                    real_exploitation_engine = get_real_exploitation_engine()
+                    
+                    # Initialize C2SessionManager for this mission
+                    c2_manager = C2SessionManager(
+                        encryption_enabled=self.settings.c2_encryption_enabled,
+                        data_dir=self.settings.c2_data_dir
+                    )
+                    
+                    use_real_exploits = True
+                    self.logger.info("🎯 Attack specialist using REAL EXPLOITATION")
+                    self.logger.info(f"🌐 C2 Session Manager initialized for mission {mission_id}")
+                except ImportError as e:
+                    self.logger.error(f"Missing exploitation module: {e}")
+                    self.logger.warning("Attack specialist falling back to SIMULATION mode")
+                except (ValueError, TypeError) as e:
+                    self.logger.error(f"Invalid configuration for real exploitation: {e}")
+                    self.logger.warning("Attack specialist falling back to SIMULATION mode")
+                except Exception as e:
+                    self.logger.error(f"Failed to initialize real exploitation: {e}")
+                    self.logger.warning("Attack specialist falling back to SIMULATION mode")
+            
+            attack = AttackSpecialist(
+                blackboard=Blackboard(settings=self.settings),
+                settings=self.settings,
+                use_real_exploits=use_real_exploits,
+                real_exploitation_engine=real_exploitation_engine
+            )
+            await attack.start(mission_id)
+            self._specialists["attack"].append(attack)
+            
+            # Store C2SessionManager reference for cleanup (thread-safe)
+            if c2_manager:
+                async with self._c2_managers_lock:
+                    if not hasattr(self, '_c2_managers'):
+                        self._c2_managers = {}
+                    self._c2_managers[mission_id] = c2_manager
         
         self.logger.info(f"Specialists started for mission {mission_id}")
     
@@ -514,15 +536,20 @@ class MissionController:
                 if specialist.current_mission == mission_id:
                     await specialist.stop()
         
-        # Cleanup C2 sessions for this mission
-        if hasattr(self, '_c2_managers') and mission_id in self._c2_managers:
-            try:
-                c2_manager = self._c2_managers[mission_id]
-                await c2_manager.cleanup_all_sessions()
-                del self._c2_managers[mission_id]
-                self.logger.info(f"🌐 C2 sessions cleaned up for mission {mission_id}")
-            except Exception as e:
-                self.logger.error(f"Error cleaning up C2 sessions: {e}")
+        # Cleanup C2 sessions for this mission (thread-safe)
+        async with self._c2_managers_lock:
+            if hasattr(self, '_c2_managers') and mission_id in self._c2_managers:
+                try:
+                    c2_manager = self._c2_managers[mission_id]
+                    await c2_manager.cleanup_all_sessions()
+                    del self._c2_managers[mission_id]
+                    self.logger.info(f"🌐 C2 sessions cleaned up for mission {mission_id}")
+                except AttributeError as e:
+                    self.logger.error(f"C2 manager missing method: {e}")
+                except (IOError, OSError) as e:
+                    self.logger.error(f"I/O error cleaning up C2 sessions: {e}")
+                except Exception as e:
+                    self.logger.error(f"Error cleaning up C2 sessions: {e}")
         
         self.logger.info(f"Specialists stopped for mission {mission_id}")
     

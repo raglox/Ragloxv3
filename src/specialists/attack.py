@@ -1593,7 +1593,16 @@ class AttackSpecialist(BaseSpecialist):
             success = exploit_result.get("success", False)
             
             if success:
-                session_type = SessionType[exploit_result.get("session_type", "SSH").upper()]
+                # Safe enum access with fallback to SHELL on invalid value
+                try:
+                    session_type_str = exploit_result.get("session_type", "SSH").upper()
+                    session_type = SessionType[session_type_str]
+                except (KeyError, AttributeError):
+                    self.logger.warning(
+                        f"Invalid session_type '{exploit_result.get('session_type')}', "
+                        "falling back to SHELL"
+                    )
+                    session_type = SessionType.SHELL
                 
                 # Create session
                 session_id = await self.add_established_session(
