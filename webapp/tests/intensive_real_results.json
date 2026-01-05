@@ -1,6 +1,6 @@
 {
-  "run_id": "e28fd198-fddb-4c4b-9533-8224b85bc660",
-  "timestamp": "2026-01-05T07:13:37.459062",
+  "run_id": "7a157fc4-77cf-4b61-8af3-7d13cd5b644a",
+  "timestamp": "2026-01-05T07:14:47.801944",
   "target": {
     "hostname": "localhost",
     "http_port": 8088,
@@ -19,7 +19,7 @@
     "total_commands": 19,
     "successful_commands": 19,
     "failed_commands": 0,
-    "total_execution_time_ms": 38898,
+    "total_execution_time_ms": 38845,
     "nmap_scans": 2,
     "nuclei_scans": 0,
     "hydra_attacks": 0,
@@ -72,7 +72,7 @@
       "name": "Real Ping Sweep",
       "category": "RECON",
       "result": "PASSED",
-      "duration_ms": 2022,
+      "duration_ms": 1998,
       "description": "Network host discovery using nmap ping sweep",
       "details": {
         "hosts_found": 5,
@@ -91,7 +91,7 @@
       "name": "Real Port Scan",
       "category": "RECON",
       "result": "PASSED",
-      "duration_ms": 64,
+      "duration_ms": 72,
       "description": "Port scanning with nmap",
       "details": {
         "open_ports": [
@@ -99,7 +99,7 @@
           8088
         ],
         "target": "localhost",
-        "raw_output": "# Nmap 7.94SVN scan initiated Mon Jan  5 07:12:57 2026 as: nmap -p 8088,2222 -oN - localhost\nNmap scan report for localhost (127.0.0.1)\nHost is up (0.000056s latency).\n\nPORT     STATE SERVICE\n2222/tcp open  EtherNetIP-1\n8088/tcp open  radan-http\n\n# Nmap done at Mon Jan  5 07:12:57 2026 -- 1 IP address (1 host up) scanned in 0.05 seconds\n"
+        "raw_output": "# Nmap 7.94SVN scan initiated Mon Jan  5 07:14:09 2026 as: nmap -p 8088,2222 -oN - localhost\nNmap scan report for localhost (127.0.0.1)\nHost is up (0.000059s latency).\n\nPORT     STATE SERVICE\n2222/tcp open  EtherNetIP-1\n8088/tcp open  radan-http\n\n# Nmap done at Mon Jan  5 07:14:09 2026 -- 1 IP address (1 host up) scanned in 0.06 seconds\n"
       },
       "error": null
     },
@@ -107,7 +107,7 @@
       "name": "Real Service Detection",
       "category": "RECON",
       "result": "PASSED",
-      "duration_ms": 6317,
+      "duration_ms": 6325,
       "description": "Service and version detection with nmap -sV",
       "details": {
         "services": [
@@ -132,7 +132,7 @@
       "name": "Real Nuclei Vulnerability Scan",
       "category": "VULN_SCAN",
       "result": "PASSED",
-      "duration_ms": 30014,
+      "duration_ms": 30018,
       "description": "Automated vulnerability scanning with Nuclei",
       "details": {
         "vulnerabilities_found": 0,
@@ -146,14 +146,14 @@
       "name": "Real Nmap Vulnerability Scan",
       "category": "VULN_SCAN",
       "result": "PASSED",
-      "duration_ms": 260,
+      "duration_ms": 207,
       "description": "Vulnerability scanning with nmap scripts",
       "details": {
         "vuln_indicators": [
           "VULNERABLE"
         ],
         "target": "localhost",
-        "raw_output": "# Nmap 7.94SVN scan initiated Mon Jan  5 07:13:34 2026 as: nmap -p 8088,2222 --script=http-title,ssh-auth-methods -oN - localhost\nNmap scan report for localhost (127.0.0.1)\nHost is up (0.000062s latency).\n\nPORT     STATE SERVICE\n2222/tcp open  EtherNetIP-1\n| ssh-auth-methods: \n|   Supported authentication methods: \n|     publickey\n|_    password\n8088/tcp open  radan-http\n|_http-title: Vulnerable Target - RAGLOX Test\n\n# Nmap done at Mon Jan  5 07:13:34 2026 -- 1 IP address (1 host up) scanned in 0.24 seconds\n"
+        "raw_output": "# Nmap 7.94SVN scan initiated Mon Jan  5 07:14:45 2026 as: nmap -p 8088,2222 --script=http-title,ssh-auth-methods -oN - localhost\nNmap scan report for localhost (127.0.0.1)\nHost is up (0.000063s latency).\n\nPORT     STATE SERVICE\n2222/tcp open  EtherNetIP-1\n| ssh-auth-methods: \n|   Supported authentication methods: \n|     publickey\n|_    password\n8088/tcp open  radan-http\n|_http-title: Vulnerable Target - RAGLOX Test\n\n# Nmap done at Mon Jan  5 07:14:45 2026 -- 1 IP address (1 host up) scanned in 0.18 seconds\n"
       },
       "error": null
     },
@@ -161,7 +161,7 @@
       "name": "Real HTTP Analysis",
       "category": "WEB",
       "result": "PASSED",
-      "duration_ms": 11,
+      "duration_ms": 10,
       "description": "HTTP response and header analysis",
       "details": {
         "analysis": {
@@ -179,7 +179,7 @@
       "name": "Real Directory Enumeration",
       "category": "WEB",
       "result": "PASSED",
-      "duration_ms": 181,
+      "duration_ms": 190,
       "description": "Directory and path discovery",
       "details": {
         "paths_tested": 10,
@@ -221,15 +221,15 @@
       "name": "Agent Network Scan",
       "category": "AGENT",
       "result": "PASSED",
-      "duration_ms": 15,
+      "duration_ms": 20,
       "description": "ReconSpecialist network discovery",
       "details": {
         "hosts_discovered": 4,
         "execution_mode": "simulated",
         "hosts": [
           "172.28.0.2",
-          "172.28.0.5",
-          "172.28.0.8",
+          "172.28.0.6",
+          "172.28.0.9",
           "172.28.0.10"
         ],
         "scope": [
@@ -243,16 +243,24 @@
       "name": "Agent Port Scan",
       "category": "AGENT",
       "result": "PASSED",
-      "duration_ms": 2749,
+      "duration_ms": 1562,
       "description": "ReconSpecialist port scanning",
       "details": {
-        "ports_found": 5,
+        "ports_found": 13,
         "open_ports": [
           22,
+          23,
+          53,
           80,
+          88,
+          143,
           443,
-          5432,
-          27017
+          993,
+          1433,
+          3268,
+          8443,
+          8888,
+          9443
         ],
         "execution_mode": "simulated",
         "high_value_ports": []
@@ -263,7 +271,7 @@
       "name": "Agent LLM Analysis",
       "category": "AGENT",
       "result": "PASSED",
-      "duration_ms": 2,
+      "duration_ms": 1,
       "description": "AnalysisSpecialist LLM decision making",
       "details": {
         "decision": "retry",
