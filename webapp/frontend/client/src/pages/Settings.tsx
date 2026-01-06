@@ -48,9 +48,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import {
   API_BASE_URL,
   WS_BASE_URL,
-  AUTH_ENABLED,
   WS_ENABLED,
-  DEMO_MODE,
 } from "@/lib/config";
 
 // ============================================
@@ -65,9 +63,9 @@ export default function Settings() {
 
   // Profile settings
   const [profile, setProfile] = useState({
-    username: user?.username || "",
+    fullName: user?.full_name || "",
     email: user?.email || "",
-    displayName: user?.displayName || "",
+    organization: user?.organization || "",
   });
 
   // Notification settings
@@ -110,9 +108,9 @@ export default function Settings() {
   useEffect(() => {
     if (user) {
       setProfile({
-        username: user.username || "",
+        fullName: user.full_name || "",
         email: user.email || "",
-        displayName: user.displayName || user.username || "",
+        organization: user.organization || "",
       });
     }
   }, [user]);
@@ -263,12 +261,12 @@ export default function Settings() {
                     <div className="flex items-center gap-4 mb-6">
                       <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
                         <span className="text-2xl font-bold text-white">
-                          {profile.username?.[0]?.toUpperCase() || "U"}
+                          {profile.fullName?.[0]?.toUpperCase() || profile.email?.[0]?.toUpperCase() || "U"}
                         </span>
                       </div>
                       <div>
                         <h3 className="text-lg font-semibold text-white">
-                          {profile.displayName || profile.username || "User"}
+                          {profile.fullName || profile.email || "User"}
                         </h3>
                         <p className="text-sm text-gray-500">{profile.email || "No email set"}</p>
                       </div>
@@ -276,23 +274,23 @@ export default function Settings() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>Username</Label>
+                        <Label>Full Name</Label>
                         <Input
-                          value={profile.username}
+                          value={profile.fullName}
                           onChange={(e) =>
-                            setProfile({ ...profile, username: e.target.value })
+                            setProfile({ ...profile, fullName: e.target.value })
                           }
-                          placeholder="Enter username"
+                          placeholder="Enter full name"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Display Name</Label>
+                        <Label>Organization</Label>
                         <Input
-                          value={profile.displayName}
+                          value={profile.organization}
                           onChange={(e) =>
-                            setProfile({ ...profile, displayName: e.target.value })
+                            setProfile({ ...profile, organization: e.target.value })
                           }
-                          placeholder="Enter display name"
+                          placeholder="Enter organization"
                         />
                       </div>
                     </div>
@@ -618,19 +616,13 @@ export default function Settings() {
                       <InfoRow label="WebSocket URL" value={WS_BASE_URL} />
                       <InfoRow
                         label="Authentication"
-                        value={AUTH_ENABLED ? "Enabled" : "Disabled"}
-                        badge={AUTH_ENABLED}
+                        value="Enabled"
+                        badge={true}
                       />
                       <InfoRow
                         label="WebSocket"
                         value={WS_ENABLED ? "Enabled" : "Disabled"}
                         badge={WS_ENABLED}
-                      />
-                      <InfoRow
-                        label="Demo Mode"
-                        value={DEMO_MODE ? "Active" : "Inactive"}
-                        badge={!DEMO_MODE}
-                        badgeInvert
                       />
                     </div>
                   </CardContent>
@@ -647,7 +639,7 @@ export default function Settings() {
                         value={isAuthenticated ? "Yes" : "No"}
                         badge={isAuthenticated}
                       />
-                      <InfoRow label="User" value={user?.username || "Anonymous"} />
+                      <InfoRow label="User" value={user?.full_name || user?.email || "Anonymous"} />
                       <InfoRow
                         label="Browser"
                         value={navigator.userAgent.split(" ").slice(-1)[0]}

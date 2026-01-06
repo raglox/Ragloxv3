@@ -27,6 +27,7 @@ from .exploitation_routes import router as exploitation_router
 from .security_routes import router as security_router
 from .infrastructure_routes import router as infrastructure_router
 from .workflow_routes import router as workflow_router
+from .auth_routes import router as auth_router
 
 # ═══════════════════════════════════════════════════════════════
 # SEC-03 & SEC-04: Security Middleware
@@ -425,6 +426,7 @@ def create_app() -> FastAPI:
     logger.info("🚦 SEC-04: Rate Limiting Middleware enabled")
     
     # Include routers
+    app.include_router(auth_router, prefix="/api/v1")  # Authentication (must be first for security)
     app.include_router(router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
     app.include_router(exploitation_router, prefix="/api/v1")

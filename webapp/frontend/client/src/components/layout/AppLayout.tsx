@@ -27,6 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { QuickNavigation } from "@/components/QuickNavigation";
 
 // ============================================
 // Types
@@ -267,20 +268,20 @@ export function AppLayout({
                     >
                       <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
                         <span className="text-[10px] font-bold text-white">
-                          {user.username?.[0]?.toUpperCase() || "U"}
+                          {user.full_name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || "U"}
                         </span>
                       </div>
                       <span className="hidden md:inline text-sm text-gray-300">
-                        {user.username}
+                        {user.full_name || user.email}
                       </span>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuLabel>
                       <div>
-                        <p className="font-medium">{user.username}</p>
+                        <p className="font-medium">{user.full_name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {user.email || "Operator"}
+                          {user.email}
                         </p>
                       </div>
                     </DropdownMenuLabel>
@@ -291,8 +292,8 @@ export function AppLayout({
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       className="text-red-400"
-                      onClick={() => {
-                        useAuthStore.getState().logout();
+                      onClick={async () => {
+                        await useAuthStore.getState().logout();
                         setLocation("/login");
                       }}
                     >
@@ -317,10 +318,11 @@ export function AppLayout({
         </main>
       </div>
 
-      {/* Command Palette (TODO: Implement) */}
-      {/* {showCommandPalette && (
-        <CommandPalette onClose={() => setShowCommandPalette(false)} />
-      )} */}
+      {/* Quick Navigation Command Palette */}
+      <QuickNavigation
+        open={showCommandPalette}
+        onOpenChange={setShowCommandPalette}
+      />
     </div>
   );
 }

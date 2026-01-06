@@ -1,6 +1,6 @@
 // RAGLOX v3.0 - Main Application
-// Updated with all routes and professional enterprise layout
-// VSCode/Manus-style design with full page integration
+// Professional enterprise layout with separated public/protected routes
+// NO DEMO/MOCK DATA - Real API integration only
 
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
@@ -11,14 +11,18 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { useAuthStore } from "./stores/authStore";
-import { AUTH_ENABLED, logConfig } from "./lib/config";
+import { logConfig } from "./lib/config";
 
-// Pages
-import Home from "./pages/Home";
+// Public Pages
+import LandingPage from "./pages/LandingPage";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+
+// Protected Pages - Core Dashboard
+import Dashboard from "./pages/Dashboard";
 import Operations from "./pages/Operations";
 import Missions from "./pages/Missions";
 import Knowledge from "./pages/Knowledge";
-import Login from "./pages/Login";
 import Infrastructure from "./pages/Infrastructure";
 import Exploitation from "./pages/Exploitation";
 import Workflow from "./pages/Workflow";
@@ -35,22 +39,26 @@ if (import.meta.env.DEV) {
 function Router() {
   return (
     <Switch>
-      {/* Public Routes */}
+      {/* Public Routes - Landing, Login, Register */}
+      <Route path="/" component={LandingPage} />
       <Route path="/login" component={Login} />
+      <Route path="/register" component={Register} />
 
-      {/* Protected Routes - Core Pages */}
-      <Route path="/">
+      {/* Protected Routes - Dashboard (Home after login) */}
+      <Route path="/dashboard">
         <ProtectedRoute>
-          <Home />
+          <Dashboard />
         </ProtectedRoute>
       </Route>
 
+      {/* Missions */}
       <Route path="/missions">
         <ProtectedRoute>
           <Missions />
         </ProtectedRoute>
       </Route>
 
+      {/* Operations */}
       <Route path="/operations">
         <ProtectedRoute>
           <Operations />
@@ -58,7 +66,7 @@ function Router() {
       </Route>
 
       <Route path="/operations/:missionId">
-        {(params) => (
+        {() => (
           <ProtectedRoute>
             <Operations />
           </ProtectedRoute>
@@ -87,7 +95,7 @@ function Router() {
       </Route>
 
       <Route path="/workflow/:missionId">
-        {(params) => (
+        {() => (
           <ProtectedRoute>
             <Workflow />
           </ProtectedRoute>
@@ -123,7 +131,7 @@ function Router() {
       </Route>
 
       <Route path="/reports/:reportId">
-        {(params) => (
+        {() => (
           <ProtectedRoute>
             <Reports />
           </ProtectedRoute>
@@ -149,9 +157,7 @@ function AppContent() {
 
   // Check authentication on app load
   useEffect(() => {
-    if (AUTH_ENABLED) {
-      checkAuth();
-    }
+    checkAuth();
   }, [checkAuth]);
 
   return (

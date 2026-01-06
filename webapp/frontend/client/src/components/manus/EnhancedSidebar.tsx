@@ -108,7 +108,7 @@ export function EnhancedSidebar({
   const activeItem = getActiveItem();
 
   // Handle navigation
-  const handleNavigation = (item: NavItem) => {
+  const handleNavigation = async (item: NavItem) => {
     if (item.disabled) {
       toast.error(`${item.label} is coming soon`);
       return;
@@ -116,9 +116,9 @@ export function EnhancedSidebar({
 
     switch (item.id) {
       case "logout":
-        logout();
-        setLocation("/login");
+        await logout();
         toast.success("Logged out successfully");
+        setLocation("/login");
         break;
       case "help":
         // Open help dialog or external docs
@@ -251,15 +251,15 @@ export function EnhancedSidebar({
           <div className="flex items-center gap-2 px-2">
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center">
               <span className="text-xs font-medium text-white">
-                {user.username?.[0]?.toUpperCase() || "U"}
+                {user.full_name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || "U"}
               </span>
             </div>
             <div className="overflow-hidden">
               <p className="text-sm font-medium text-white truncate">
-                {user.username}
+                {user.full_name || user.email}
               </p>
               <p className="text-[10px] text-gray-500 truncate">
-                {user.email || "Operator"}
+                {user.email}
               </p>
             </div>
           </div>
