@@ -1674,6 +1674,51 @@ class MissionController:
                                 # Get user's environments
                                 user_environments = await self.environment_manager.list_user_environments(user_id_str)
                                 
+                                # ═══════════════════════════════════════════════════════════
+                                # NEW: Create environment from user's VM if none exists
+                                # ═══════════════════════════════════════════════════════════
+                                if not user_environments:
+                                    self.logger.info(f"No environments found for user {user_id_str}, attempting to create from VM metadata")
+                                    
+                                    # Get user data with VM info
+                                    from ..core.database.user_repository import UserRepository
+                                    user_repo = UserRepository(self.blackboard.redis)
+                                    user_data = await user_repo.get(user_id_str)
+                                    
+                                    if user_data and user_data.get("metadata"):
+                                        metadata = user_data["metadata"]
+                                        vm_ip = metadata.get("vm_ip")
+                                        vm_ssh_user = metadata.get("vm_ssh_user", "root")
+                                        vm_ssh_password = metadata.get("vm_ssh_password")
+                                        vm_ssh_port = metadata.get("vm_ssh_port", 22)
+                                        
+                                        if vm_ip and vm_ssh_password:
+                                            # Create environment config
+                                            from ..infrastructure.orchestrator import EnvironmentConfig, EnvironmentType
+                                            from ..infrastructure.ssh import SSHConnectionConfig
+                                            
+                                            ssh_config = SSHConnectionConfig(
+                                                host=vm_ip,
+                                                port=vm_ssh_port,
+                                                username=vm_ssh_user,
+                                                password=vm_ssh_password
+                                            )
+                                            
+                                            env_config = EnvironmentConfig(
+                                                environment_type=EnvironmentType.REMOTE_SSH,
+                                                name=f"User VM - {user_id_str[:8]}",
+                                                ssh_config=ssh_config,
+                                                user_id=user_id_str
+                                            )
+                                            
+                                            # Create and register environment
+                                            try:
+                                                agent_env = await self.environment_manager.create_environment(env_config)
+                                                user_environments = [agent_env]
+                                                self.logger.info(f"Created and connected environment {agent_env.environment_id} for user {user_id_str}")
+                                            except Exception as e:
+                                                self.logger.error(f"Failed to create environment on-the-fly: {e}")
+                                
                                 if user_environments:
                                     # Use the first available connected environment
                                     agent_env = None
