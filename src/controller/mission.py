@@ -158,17 +158,24 @@ class MissionController:
     # Mission Lifecycle
     # ═══════════════════════════════════════════════════════════
     
-    async def create_mission(self, mission_data: MissionCreate) -> str:
+    async def create_mission(
+        self,
+        mission_data: MissionCreate,
+        organization_id: Optional[str] = None,
+        created_by: Optional[str] = None
+    ) -> str:
         """
         Create a new mission.
         
         Args:
             mission_data: Mission creation data
+            organization_id: Organization ID for multi-tenant isolation (SaaS)
+            created_by: User ID who created the mission
             
         Returns:
             Mission ID
         """
-        self.logger.info(f"Creating mission: {mission_data.name}")
+        self.logger.info(f"Creating mission: {mission_data.name} for org: {organization_id}")
         
         # Connect to Blackboard if needed
         if not await self.blackboard.health_check():
@@ -179,28 +186,37 @@ class MissionController:
             goal: GoalStatus.PENDING for goal in mission_data.goals
         }
         
-        # Create Mission object
+        # Convert organization_id and created_by to UUID if provided
+        from uuid import UUID
+        org_uuid = UUID(organization_id) if organization_id else None
+        user_uuid = UUID(created_by) if created_by else None
+        
+        # Create Mission object with organization ownership
         mission = Mission(
             name=mission_data.name,
             description=mission_data.description,
             scope=mission_data.scope,
             goals=goals_dict,
             constraints=mission_data.constraints,
-            status=MissionStatus.CREATED
+            status=MissionStatus.CREATED,
+            organization_id=org_uuid,
+            created_by=user_uuid
         )
         
         # Store in Blackboard
         mission_id = await self.blackboard.create_mission(mission)
         
-        # Track locally
+        # Track locally with organization info
         self._active_missions[mission_id] = {
             "mission": mission,
             "status": MissionStatus.CREATED,
             "specialists": [],
-            "created_at": datetime.utcnow()
+            "created_at": datetime.utcnow(),
+            "organization_id": organization_id,
+            "created_by": created_by
         }
         
-        self.logger.info(f"Mission created: {mission_id}")
+        self.logger.info(f"Mission created: {mission_id} (org: {organization_id})")
         return mission_id
     
     async def start_mission(self, mission_id: str) -> bool:
@@ -440,7 +456,10 @@ class MissionController:
                         "vuln_count": 0,
                         "created_at": local_mission.get("created_at", datetime.utcnow()).isoformat() if hasattr(local_mission.get("created_at"), 'isoformat') else str(local_mission.get("created_at")),
                         "started_at": None,
-                        "completed_at": None
+                        "completed_at": None,
+                        # SaaS Multi-tenancy fields
+                        "organization_id": local_mission.get("organization_id"),
+                        "created_by": local_mission.get("created_by")
                     }
             return None
         
@@ -473,7 +492,10 @@ class MissionController:
             "vuln_count": len(vulns),
             "created_at": mission_data.get("created_at"),
             "started_at": mission_data.get("started_at"),
-            "completed_at": mission_data.get("completed_at")
+            "completed_at": mission_data.get("completed_at"),
+            # SaaS Multi-tenancy fields
+            "organization_id": mission_data.get("organization_id"),
+            "created_by": mission_data.get("created_by")
         }
     
     # ═══════════════════════════════════════════════════════════
@@ -809,9 +831,28 @@ class MissionController:
     # Utility Methods
     # ═══════════════════════════════════════════════════════════
     
-    async def get_active_missions(self) -> List[str]:
-        """Get list of active mission IDs."""
-        return list(self._active_missions.keys())
+    async def get_active_missions(self, organization_id: Optional[str] = None) -> List[str]:
+        """
+        Get list of active mission IDs.
+        
+        Args:
+            organization_id: Optional organization ID for filtering (SaaS multi-tenancy)
+            
+        Returns:
+            List of mission IDs belonging to the specified organization,
+            or all missions if organization_id is None
+        """
+        if organization_id is None:
+            return list(self._active_missions.keys())
+        
+        # Filter by organization_id
+        filtered_missions = []
+        for mission_id, mission_data in self._active_missions.items():
+            mission_org_id = mission_data.get("organization_id")
+            if mission_org_id == organization_id:
+                filtered_missions.append(mission_id)
+        
+        return filtered_missions
     
     # ═══════════════════════════════════════════════════════════
     # HITL (Human-in-the-Loop) Methods

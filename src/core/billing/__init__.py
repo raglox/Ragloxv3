@@ -20,6 +20,7 @@ from .models import (
     BillingCustomer,
     BillingSubscription,
     BillingEvent,
+    PLAN_PRICING,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "BillingCustomer",
     "BillingSubscription",
     "BillingEvent",
+    "PLAN_PRICING",
 ]
