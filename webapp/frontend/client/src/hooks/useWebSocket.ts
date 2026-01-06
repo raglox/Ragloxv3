@@ -123,7 +123,9 @@ export function useWebSocket(
 
   const handleMessage = useCallback((message: WebSocketMessage) => {
     // Generate a unique ID for deduplication
-    const messageId = `${message.type}-${message.timestamp}-${JSON.stringify(message.data).slice(0, 50)}`;
+    // Handle undefined data gracefully
+    const dataStr = message.data ? JSON.stringify(message.data) : "";
+    const messageId = `${message.type}-${message.timestamp}-${dataStr.slice(0, 50)}`;
     if (processedMessageIds.current.has(messageId)) {
       return; // Skip duplicate messages
     }
