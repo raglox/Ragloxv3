@@ -461,11 +461,17 @@ async def provision_user_vm(
         # Create VM configuration
         hostname = f"raglox-{user_id[:8]}"
         
+        # Generate secure password for SSH access
+        import secrets
+        import string
+        vm_password = ''.join(secrets.choice(string.ascii_letters + string.digits + "!@#$%") for _ in range(24))
+        
         config = VMConfig(
             hostname=hostname,
             plan_id=vm_config.plan,
             os_id=vm_config.os,
             location_id=vm_config.location,
+            password=vm_password,  # SSH password for VM access
             tags={"user_id": user_id, "org_id": organization_id, "managed_by": "raglox"},
         )
         
@@ -490,12 +496,16 @@ async def provision_user_vm(
                 if vm_status and vm_status.ipv4:
                     break
             
-            # Update user with VM details
+            # Update user with VM details including SSH credentials
+            # Note: In production, consider encrypting the password before storage
             await user_repo.update(user_uuid, {
                 "metadata": {
                     "vm_status": VMProvisionStatus.READY.value,
                     "vm_id": vm_instance.vm_id,
                     "vm_ip": vm_instance.ipv4,
+                    "vm_ssh_user": "root",  # Default SSH user for OneProvider VMs
+                    "vm_ssh_password": vm_password,  # Store password for SSH access
+                    "vm_ssh_port": 22,
                 }
             }, org_uuid)
             

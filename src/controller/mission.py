@@ -1629,6 +1629,9 @@ class MissionController:
         """
         Execute a shell command on the mission's target environment.
         
+        Uses the user's VM environment via SSH for real command execution.
+        Falls back to simulation mode if no environment is available.
+        
         Args:
             mission_id: Mission ID
             command: Command to execute
@@ -1647,66 +1650,151 @@ class MissionController:
                 status="running"
             )
             
-            # Check if we have SSH manager
-            ssh_manager = self._ssh_manager if hasattr(self, '_ssh_manager') else None
-            
-            if ssh_manager:
-                # TODO: Execute via SSH in production
-                pass
-            
-            # Simulate command execution for demonstration
-            # In production, this would use SSHCommandExecutor
             output_lines = []
+            exit_code = 0
+            executed_via_ssh = False
             
-            if command.startswith("ls"):
-                output_lines = [
-                    "total 24",
-                    "drwxr-xr-x  4 root root 4096 Jan  6 12:00 .",
-                    "drwxr-xr-x 10 root root 4096 Jan  6 12:00 ..",
-                    "-rw-r--r--  1 root root 1024 Jan  6 12:00 config.txt",
-                    "-rwxr-xr-x  1 root root 2048 Jan  6 12:00 start.sh",
-                    "drwxr-xr-x  2 root root 4096 Jan  6 12:00 logs",
-                    "drwxr-xr-x  2 root root 4096 Jan  6 12:00 data"
-                ]
-            elif command.startswith("pwd"):
-                output_lines = ["/home/ubuntu/mission"]
-            elif command.startswith("whoami"):
-                output_lines = ["ubuntu"]
-            elif command.startswith("id"):
-                output_lines = ["uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),27(sudo)"]
-            elif command.startswith("uname"):
-                output_lines = ["Linux raglox-sandbox 5.15.0-91-generic x86_64 GNU/Linux"]
-            elif command.startswith("df"):
-                output_lines = [
-                    "Filesystem     1K-blocks    Used Available Use% Mounted on",
-                    "/dev/sda1       50000000 5000000  45000000  10% /",
-                ]
-            elif command.startswith("nmap"):
-                output_lines = [
-                    "Starting Nmap 7.94 ( https://nmap.org )",
-                    "Nmap scan report for target",
-                    "Host is up (0.0010s latency).",
-                    "PORT     STATE SERVICE    VERSION",
-                    "22/tcp   open  ssh        OpenSSH 8.4p1",
-                    "80/tcp   open  http       Apache httpd 2.4.51",
-                    "443/tcp  open  https      nginx 1.21.6",
-                    "Nmap done: 1 IP address (1 host up)"
-                ]
-            elif command.startswith("cat"):
-                output_lines = [
-                    "# Configuration File",
-                    "hostname=target-server",
-                    "ip=192.168.1.100"
-                ]
-            elif command.startswith("ps"):
-                output_lines = [
-                    "  PID TTY          TIME CMD",
-                    "    1 ?        00:00:02 systemd",
-                    " 1024 ?        00:00:00 sshd",
-                    " 1025 ?        00:00:01 apache2"
-                ]
-            else:
-                output_lines = [f"Command '{command}' executed successfully (simulation mode)"]
+            # ═══════════════════════════════════════════════════════════════
+            # REAL EXECUTION: Try to execute via user's VM environment
+            # ═══════════════════════════════════════════════════════════════
+            
+            if self.environment_manager:
+                try:
+                    # Get mission data to find the user who created it
+                    mission_data = await self.blackboard.get_mission(mission_id)
+                    
+                    if mission_data:
+                        user_id = mission_data.get("created_by")
+                        
+                        if user_id:
+                            # Convert UUID to string if needed
+                            user_id_str = str(user_id) if user_id else None
+                            
+                            if user_id_str:
+                                # Get user's environments
+                                user_environments = await self.environment_manager.list_user_environments(user_id_str)
+                                
+                                if user_environments:
+                                    # Use the first available connected environment
+                                    agent_env = None
+                                    for env in user_environments:
+                                        if env.status.value in ["connected", "ready"]:
+                                            agent_env = env
+                                            break
+                                    
+                                    if agent_env and agent_env.ssh_manager and agent_env.connection_id:
+                                        self.logger.info(f"Executing command via SSH on environment {agent_env.environment_id}")
+                                        
+                                        # Import and use AgentExecutor
+                                        from ..infrastructure.orchestrator.agent_executor import AgentExecutor
+                                        
+                                        executor = AgentExecutor()
+                                        task_id = f"cmd-{mission_id[:8]}-{id(command)}"
+                                        
+                                        # Execute the command
+                                        result = await executor.execute_command(
+                                            environment=agent_env,
+                                            command=command,
+                                            task_id=task_id,
+                                            timeout=60
+                                        )
+                                        
+                                        # Process result
+                                        if result.status == "success":
+                                            output_lines = result.stdout.split('\n') if result.stdout else []
+                                            exit_code = result.exit_code
+                                            executed_via_ssh = True
+                                            self.logger.info(f"Command executed successfully via SSH")
+                                        else:
+                                            # Command failed but we got output
+                                            error_output = result.stderr or result.stdout or "Command failed"
+                                            output_lines = error_output.split('\n')
+                                            exit_code = result.exit_code
+                                            executed_via_ssh = True
+                                            self.logger.warning(f"Command failed with exit code {exit_code}")
+                                    else:
+                                        self.logger.warning(f"No connected environment found for user {user_id_str}")
+                                else:
+                                    self.logger.warning(f"No environments found for user {user_id_str}")
+                        else:
+                            self.logger.warning(f"Mission {mission_id} has no created_by user")
+                    else:
+                        self.logger.warning(f"Mission {mission_id} not found")
+                        
+                except Exception as env_error:
+                    self.logger.error(f"Environment execution error: {env_error}")
+                    # Fall through to simulation mode
+            
+            # ═══════════════════════════════════════════════════════════════
+            # FALLBACK: Simulation mode when no VM environment is available
+            # ═══════════════════════════════════════════════════════════════
+            
+            if not executed_via_ssh:
+                self.logger.info(f"Using simulation mode for command: {command}")
+                
+                if command.startswith("ls"):
+                    output_lines = [
+                        "total 24",
+                        "drwxr-xr-x  4 root root 4096 Jan  6 12:00 .",
+                        "drwxr-xr-x 10 root root 4096 Jan  6 12:00 ..",
+                        "-rw-r--r--  1 root root 1024 Jan  6 12:00 config.txt",
+                        "-rwxr-xr-x  1 root root 2048 Jan  6 12:00 start.sh",
+                        "drwxr-xr-x  2 root root 4096 Jan  6 12:00 logs",
+                        "drwxr-xr-x  2 root root 4096 Jan  6 12:00 data",
+                        "",
+                        "[SIMULATION MODE - No VM environment configured]"
+                    ]
+                elif command.startswith("pwd"):
+                    output_lines = ["/home/ubuntu/mission", "", "[SIMULATION MODE]"]
+                elif command.startswith("whoami"):
+                    output_lines = ["ubuntu", "", "[SIMULATION MODE]"]
+                elif command.startswith("id"):
+                    output_lines = ["uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),27(sudo)", "", "[SIMULATION MODE]"]
+                elif command.startswith("uname"):
+                    output_lines = ["Linux raglox-sandbox 5.15.0-91-generic x86_64 GNU/Linux", "", "[SIMULATION MODE]"]
+                elif command.startswith("df"):
+                    output_lines = [
+                        "Filesystem     1K-blocks    Used Available Use% Mounted on",
+                        "/dev/sda1       50000000 5000000  45000000  10% /",
+                        "",
+                        "[SIMULATION MODE]"
+                    ]
+                elif command.startswith("nmap"):
+                    output_lines = [
+                        "Starting Nmap 7.94 ( https://nmap.org )",
+                        "Nmap scan report for target",
+                        "Host is up (0.0010s latency).",
+                        "PORT     STATE SERVICE    VERSION",
+                        "22/tcp   open  ssh        OpenSSH 8.4p1",
+                        "80/tcp   open  http       Apache httpd 2.4.51",
+                        "443/tcp  open  https      nginx 1.21.6",
+                        "Nmap done: 1 IP address (1 host up)",
+                        "",
+                        "[SIMULATION MODE]"
+                    ]
+                elif command.startswith("cat"):
+                    output_lines = [
+                        "# Configuration File",
+                        "hostname=target-server",
+                        "ip=192.168.1.100",
+                        "",
+                        "[SIMULATION MODE]"
+                    ]
+                elif command.startswith("ps"):
+                    output_lines = [
+                        "  PID TTY          TIME CMD",
+                        "    1 ?        00:00:02 systemd",
+                        " 1024 ?        00:00:00 sshd",
+                        " 1025 ?        00:00:01 apache2",
+                        "",
+                        "[SIMULATION MODE]"
+                    ]
+                else:
+                    output_lines = [
+                        f"Command '{command}' executed successfully",
+                        "",
+                        "[SIMULATION MODE - Configure VM environment for real execution]"
+                    ]
             
             output = "\n".join(output_lines)
             
@@ -1715,7 +1803,7 @@ class MissionController:
                 mission_id=mission_id,
                 command=command,
                 output=f"$ {command}\n{output}",
-                exit_code=0,
+                exit_code=exit_code,
                 status="completed"
             )
             
