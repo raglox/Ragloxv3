@@ -746,6 +746,10 @@ class ChatMessage(BaseModel):
     related_task_id: Optional[UUID] = None
     related_action_id: Optional[UUID] = None
     
+    # Command execution context (for terminal integration)
+    command: Optional[str] = None
+    output: Optional[List[str]] = None
+    
     # Timestamp
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     

@@ -1510,6 +1510,7 @@ class MissionController:
         # Handle command execution request
         elif is_run_request and extracted_command:
             # Execute the command via terminal_routes
+            command_output_lines = []
             try:
                 from ..api.websocket import broadcast_terminal_output, broadcast_ai_plan
                 
@@ -1527,6 +1528,7 @@ class MissionController:
                 
                 # Simulate command execution (in production, use SSHCommandExecutor)
                 command_output = await self._execute_shell_command(mission_id, extracted_command)
+                command_output_lines = command_output.split("\n") if command_output else []
                 
                 response_content = (
                     f"✅ **Command Executed**\n\n"
@@ -1544,6 +1546,17 @@ class MissionController:
                     ],
                     message=f"Command completed: {extracted_command}",
                     reasoning="Command execution finished"
+                )
+                
+                # Return response with command and output fields populated
+                return ChatMessage(
+                    mission_id=UUID(mission_id),
+                    role="system",
+                    content=response_content,
+                    command=extracted_command,
+                    output=command_output_lines,
+                    related_task_id=message.related_task_id,
+                    related_action_id=message.related_action_id
                 )
                 
             except Exception as e:

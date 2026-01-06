@@ -233,6 +233,9 @@ class ChatMessageResponse(BaseModel):
     timestamp: str
     related_task_id: Optional[str] = None
     related_action_id: Optional[str] = None
+    # Command field for terminal integration
+    command: Optional[str] = None
+    output: Optional[List[str]] = None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1059,7 +1062,9 @@ async def send_chat_message(
             content=message.content,
             timestamp=message.timestamp.isoformat(),
             related_task_id=str(message.related_task_id) if message.related_task_id else None,
-            related_action_id=str(message.related_action_id) if message.related_action_id else None
+            related_action_id=str(message.related_action_id) if message.related_action_id else None,
+            command=message.command,
+            output=message.output
         )
     except Exception as e:
         logger.error(f"Chat message error for mission {mission_id}: {e}")

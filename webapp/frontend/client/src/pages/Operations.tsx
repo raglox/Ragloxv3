@@ -327,11 +327,13 @@ export default function Operations() {
         addEvent({
           id: `event-${Date.now()}`,
           type: "chat_message",
-          title: "Message from assistant",
+          title: response.command ? `Command: ${response.command}` : "Message from assistant",
           description: response.content,
           timestamp: response.timestamp,
           status: "completed",
           data: response,
+          command: response.command,  // Pass command for terminal integration
+          output: response.output?.join("\n"),  // Pass output for terminal
           expanded: false,
         });
       }
