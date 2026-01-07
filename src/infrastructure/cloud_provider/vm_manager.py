@@ -34,9 +34,9 @@ class VMStatus(str, Enum):
 class VMConfiguration:
     """VM configuration specification"""
     hostname: str
-    plan_id: str = "8GB-2CORE"  # Default: 8GB RAM, 2 Cores
-    os_id: str = "ubuntu-22.04"  # Default: Ubuntu 22.04
-    location_id: str = "us-east"  # Default location
+    plan_id: str = "86"  # Default: devd20c1 (1GB RAM, 1 Core, Paris)
+    os_id: str = "1197"  # Default: Ubuntu 22.04.5 64-bit
+    location_id: str = "34"  # Default: Paris, France
     ssh_keys: List[str] = field(default_factory=list)
     password: Optional[str] = None
     ipv6: bool = False
