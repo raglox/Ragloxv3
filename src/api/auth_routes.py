@@ -466,11 +466,12 @@ async def provision_user_vm(
         import string
         vm_password = ''.join(secrets.choice(string.ascii_letters + string.digits + "!@#$%") for _ in range(24))
         
+        # Use settings values instead of vm_config to ensure correct OneProvider values
         config = VMConfig(
             hostname=hostname,
-            plan_id=vm_config.plan,
-            os_id=vm_config.os,
-            location_id=vm_config.location,
+            plan_id=settings.oneprovider_default_plan,  # Use settings value (86)
+            os_id=settings.oneprovider_default_os,      # Use settings value (1197)
+            location_id=settings.oneprovider_default_location,  # Use settings value (34)
             password=vm_password,  # SSH password for VM access
             tags={"user_id": user_id, "org_id": organization_id, "managed_by": "raglox"},
         )
