@@ -1734,7 +1734,6 @@ class MissionController:
                                             # Start VM provisioning in background
                                             from ..api.auth_routes import provision_user_vm, VMConfiguration
                                             from uuid import UUID
-                                            import asyncio
                                             
                                             # Update status to pending
                                             try:
