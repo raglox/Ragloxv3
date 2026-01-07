@@ -10,9 +10,9 @@ from typing import Dict, Any
 class TestRootEndpoint:
     """Test cases for the root endpoint."""
 
-    def test_root_get_success(self, client: httpx.Client) -> None:
+    def test_root_get_success(self, authenticated_client: httpx.Client) -> None:
         """Test that GET / returns 200 OK."""
-        response = client.get("/")
+        response = authenticated_client.get("/")
         assert response.status_code == 200
         # Response should be JSON (could be empty object)
         assert response.headers["content-type"] == "application/json"
@@ -21,9 +21,9 @@ class TestRootEndpoint:
 class TestHealthEndpoint:
     """Test cases for the health check endpoint."""
 
-    def test_health_check_success(self, client: httpx.Client) -> None:
+    def test_health_check_success(self, authenticated_client: httpx.Client) -> None:
         """Test that GET /health returns 200 OK."""
-        response = client.get("/health")
+        response = authenticated_client.get("/health")
         assert response.status_code == 200
         # Response should be JSON (could be empty object)
         assert response.headers["content-type"] == "application/json"

@@ -21,6 +21,61 @@ def client(base_url: str) -> Generator[httpx.Client, None, None]:
         yield client
 
 
+@pytest.fixture(scope="session")
+def auth_token(client: httpx.Client) -> str:
+    """
+    Authenticate and return access token.
+    Registers or logs in a test user and returns the JWT token.
+    """
+    test_user = {
+        "email": "test@raglox.com",
+        "password": "TestPassword123!",
+        "full_name": "Test User"
+    }
+    
+    # Try to register
+    register_response = client.post("/api/v1/auth/register", json=test_user)
+    
+    if register_response.status_code == 409:  # User already exists
+        # Login instead
+        login_data = {
+            "email": test_user["email"],
+            "password": test_user["password"]
+        }
+        login_response = client.post("/api/v1/auth/login", json=login_data)
+        assert login_response.status_code == 200, f"Login failed: {login_response.text}"
+        token = login_response.json()["access_token"]
+    elif register_response.status_code == 201:
+        # Registration successful
+        token = register_response.json()["access_token"]
+    else:
+        raise AssertionError(f"Authentication failed: {register_response.status_code} - {register_response.text}")
+    
+    return token
+
+
+@pytest.fixture(scope="session")
+def auth_headers(auth_token: str) -> Dict[str, str]:
+    """Return authorization headers with Bearer token."""
+    return {"Authorization": f"Bearer {auth_token}"}
+
+
+@pytest.fixture
+def authenticated_client(client: httpx.Client, auth_headers: Dict[str, str]) -> httpx.Client:
+    """
+    HTTP client with authentication headers.
+    Use this fixture instead of 'client' for authenticated requests.
+    """
+    # Create a new client with auth headers
+    authenticated = httpx.Client(
+        base_url=client.base_url,
+        timeout=client.timeout,
+        headers=auth_headers
+    )
+    yield authenticated
+    authenticated.close()
+
+
 @pytest.fixture
 def mission_id() -> str:
     """Sample mission ID for testing."""
@@ -142,35 +197,35 @@ def sample_task_module_request() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def created_mission(client: httpx.Client, sample_mission_create: Dict[str, Any]) -> Dict[str, Any]:
+def created_mission(authenticated_client: httpx.Client, sample_mission_create: Dict[str, Any]) -> Dict[str, Any]:
     """Create a mission for testing and return its details."""
-    response = client.post("/api/v1/missions", json=sample_mission_create)
+    response = authenticated_client.post("/api/v1/missions", json=sample_mission_create)
     assert response.status_code == 201
     return response.json()
 
 
 @pytest.fixture
-def running_mission(client: httpx.Client, created_mission: Dict[str, Any]) -> Dict[str, Any]:
+def running_mission(authenticated_client: httpx.Client, created_mission: Dict[str, Any]) -> Dict[str, Any]:
     """Start a created mission and return its details."""
     mission_id = created_mission["mission_id"]
-    response = client.post(f"/api/v1/missions/{mission_id}/start")
+    response = authenticated_client.post(f"/api/v1/missions/{mission_id}/start")
     assert response.status_code == 200
     return response.json()
 
 
 @pytest.fixture
-def paused_mission(client: httpx.Client, running_mission: Dict[str, Any]) -> Dict[str, Any]:
+def paused_mission(authenticated_client: httpx.Client, running_mission: Dict[str, Any]) -> Dict[str, Any]:
     """Pause a running mission and return its details."""
     mission_id = running_mission["mission_id"]
-    response = client.post(f"/api/v1/missions/{mission_id}/pause")
+    response = authenticated_client.post(f"/api/v1/missions/{mission_id}/pause")
     assert response.status_code == 200
     return response.json()
 
 
 @pytest.fixture
-def stopped_mission(client: httpx.Client, running_mission: Dict[str, Any]) -> Dict[str, Any]:
+def stopped_mission(authenticated_client: httpx.Client, running_mission: Dict[str, Any]) -> Dict[str, Any]:
     """Stop a running mission and return its details."""
     mission_id = running_mission["mission_id"]
-    response = client.post(f"/api/v1/missions/{mission_id}/stop")
+    response = authenticated_client.post(f"/api/v1/missions/{mission_id}/stop")
     assert response.status_code == 200
     return response.json()
