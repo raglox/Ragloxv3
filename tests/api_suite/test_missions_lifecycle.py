@@ -131,7 +131,7 @@ class TestMissionStateTransitions:
     def test_start_mission_success(self, authenticated_client: httpx.Client, created_mission: Dict[str, Any]) -> None:
         """Test that POST /api/v1/missions/{mission_id}/start returns 200 OK."""
         mission_id = created_mission["mission_id"]
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/start")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/start", json={})
         assert response.status_code == 200
         data = response.json()
         
@@ -140,13 +140,13 @@ class TestMissionStateTransitions:
 
     def test_start_mission_not_found(self, authenticated_client: httpx.Client, mission_id: str) -> None:
         """Test that starting a non-existent mission returns 404."""
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/start")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/start", json={})
         assert response.status_code == 404
 
     def test_pause_mission_success(self, authenticated_client: httpx.Client, running_mission: Dict[str, Any]) -> None:
         """Test that POST /api/v1/missions/{mission_id}/pause returns 200 OK."""
         mission_id = running_mission["mission_id"]
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/pause")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/pause", json={})
         assert response.status_code == 200
         data = response.json()
         
@@ -156,14 +156,14 @@ class TestMissionStateTransitions:
     def test_pause_mission_not_running(self, authenticated_client: httpx.Client, created_mission: Dict[str, Any]) -> None:
         """Test that pausing a non-running mission returns appropriate error."""
         mission_id = created_mission["mission_id"]
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/pause")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/pause", json={})
         # Should return 400 or 422 depending on implementation
         assert response.status_code in [400, 422]
 
     def test_resume_mission_success(self, authenticated_client: httpx.Client, paused_mission: Dict[str, Any]) -> None:
         """Test that POST /api/v1/missions/{mission_id}/resume returns 200 OK."""
         mission_id = paused_mission["mission_id"]
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/resume")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/resume", json={})
         assert response.status_code == 200
         data = response.json()
         
@@ -173,14 +173,14 @@ class TestMissionStateTransitions:
     def test_resume_mission_not_paused(self, authenticated_client: httpx.Client, running_mission: Dict[str, Any]) -> None:
         """Test that resuming a non-paused mission returns appropriate error."""
         mission_id = running_mission["mission_id"]
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/resume")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/resume", json={})
         # Should return 400 or 422 depending on implementation
         assert response.status_code in [400, 422]
 
     def test_stop_mission_success(self, authenticated_client: httpx.Client, running_mission: Dict[str, Any]) -> None:
         """Test that POST /api/v1/missions/{mission_id}/stop returns 200 OK."""
         mission_id = running_mission["mission_id"]
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/stop")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/stop", json={})
         assert response.status_code == 200
         data = response.json()
         
@@ -189,7 +189,7 @@ class TestMissionStateTransitions:
 
     def test_stop_mission_not_found(self, authenticated_client: httpx.Client, mission_id: str) -> None:
         """Test that stopping a non-existent mission returns 404."""
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/stop")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/stop", json={})
         assert response.status_code == 404
 
 
@@ -212,7 +212,7 @@ class TestMissionWorkflow:
         assert mission_status["status"] == "created"
         
         # 3. Start mission
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/start")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/start", json={})
         assert response.status_code == 200
         mission_data = response.json()
         assert mission_data["status"] == "running"
@@ -224,7 +224,7 @@ class TestMissionWorkflow:
         assert mission_status["status"] == "running"
         
         # 5. Pause mission
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/pause")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/pause", json={})
         assert response.status_code == 200
         mission_data = response.json()
         assert mission_data["status"] == "paused"
@@ -236,13 +236,13 @@ class TestMissionWorkflow:
         assert mission_status["status"] == "paused"
         
         # 7. Resume mission
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/resume")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/resume", json={})
         assert response.status_code == 200
         mission_data = response.json()
         assert mission_data["status"] == "running"
         
         # 8. Stop mission
-        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/stop")
+        response = authenticated_client.post(f"/api/v1/missions/{mission_id}/stop", json={})
         assert response.status_code == 200
         mission_data = response.json()
         assert mission_data["status"] == "stopped"
