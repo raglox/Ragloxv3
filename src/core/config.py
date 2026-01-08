@@ -547,6 +547,58 @@ class Settings(BaseSettings):
     )
     
     # ═══════════════════════════════════════════════════════════
+    # Firecracker Cloud Integration
+    # ═══════════════════════════════════════════════════════════
+    firecracker_enabled: bool = Field(
+        default=True,
+        description="Enable Firecracker microVM integration for sandbox provisioning"
+    )
+    firecracker_api_url: str = Field(
+        default="http://208.115.230.194:8080",
+        description="Firecracker Manager API URL"
+    )
+    firecracker_default_vcpu: int = Field(
+        default=2,
+        description="Default number of vCPUs for microVMs"
+    )
+    firecracker_default_mem_mib: int = Field(
+        default=2048,
+        description="Default memory size in MiB for microVMs"
+    )
+    firecracker_default_disk_mb: int = Field(
+        default=10240,
+        description="Default disk size in MB for microVMs"
+    )
+    firecracker_vm_timeout: int = Field(
+        default=30,
+        description="Timeout for microVM provisioning in seconds (much faster than cloud VMs)"
+    )
+    firecracker_max_vms_per_user: int = Field(
+        default=5,
+        description="Maximum concurrent microVMs per user"
+    )
+    firecracker_ssh_password: str = Field(
+        default="raglox123",
+        description="Default SSH root password for Firecracker VMs"
+    )
+    
+    # Cloud provider selection
+    cloud_provider: str = Field(
+        default="firecracker",
+        description="Cloud provider to use: 'firecracker' or 'oneprovider'"
+    )
+    
+    @property
+    def use_firecracker(self) -> bool:
+        """Check if Firecracker is enabled and selected"""
+        return self.firecracker_enabled and self.cloud_provider == "firecracker"
+    
+    @property
+    def use_oneprovider(self) -> bool:
+        """Check if OneProvider is enabled and selected"""
+        return self.oneprovider_enabled and self.cloud_provider == "oneprovider"
+    
+    # ═══════════════════════════════════════════════════════════
     # SSH Infrastructure
     # ═══════════════════════════════════════════════════════════
     ssh_enabled: bool = Field(
