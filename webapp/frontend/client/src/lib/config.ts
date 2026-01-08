@@ -22,7 +22,7 @@ export const isSandbox = typeof window !== 'undefined' && (
 // ============================================
 
 // Backend server IP - configurable via environment variable
-const BACKEND_HOST = import.meta.env.VITE_BACKEND_HOST || '172.245.232.188';
+const BACKEND_HOST = import.meta.env.VITE_BACKEND_HOST || '208.115.230.194';
 const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || '8000';
 
 // API Base URL
