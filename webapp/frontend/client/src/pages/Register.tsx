@@ -19,7 +19,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/lib/api";
 import { useAuth } from "@/stores/authStore";
-import { toast } from "sonner";
+import { enhancedToast } from "@/components/ui/enhanced-toast";
+import { ConnectionStatusBanner } from "@/components/ui/connection-status-banner";
 
 export default function Register() {
   const [, setLocation] = useLocation();
@@ -37,6 +38,10 @@ export default function Register() {
   });
 
   // VM configuration removed - will be provisioned on-demand
+  
+  // Connection state for banner
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Form validation
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -103,6 +108,27 @@ export default function Register() {
     return Object.keys(newErrors).length === 0;
   };
 
+  const handleRetryConnection = async () => {
+    setIsRetrying(true);
+    setBackendError(null);
+    
+    try {
+      // Test backend connection
+      const response = await fetch('http://208.115.230.194:8000/api/v1/health');
+      if (response.ok) {
+        enhancedToast.success("Connected to backend", {
+          description: "You can now proceed with registration"
+        });
+      } else {
+        setBackendError("Backend is reachable but not responding correctly");
+      }
+    } catch (error) {
+      setBackendError("Unable to connect to backend server");
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
   // handleAccountSubmit removed - single step registration now
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -113,20 +139,35 @@ export default function Register() {
       const response = await authApi.register({
         email: formData.email,
         password: formData.password,
-        full_name: formData.fullName,
+        fullname: formData.fullName,
         organization_name: formData.organization || undefined,
       });
 
       if (response.access_token) {
         setToken(response.access_token);
         setUser(response.user);
-        toast.success("Account created successfully! Welcome to RAGLOX.");
+        enhancedToast.success("Account created successfully!", {
+          description: "Welcome to RAGLOX. Redirecting to dashboard..."
+        });
         setLocation("/dashboard");
       }
     } catch (error: any) {
       console.error("Registration error:", error);
       const message = error.message || "Registration failed. Please try again.";
-      toast.error(message);
+      
+      // Check if it's a network error
+      if (error.status === 0 || !error.status) {
+        setBackendError("Unable to connect to backend server. Please check if the server is running.");
+        enhancedToast.connectionError(
+          "Unable to connect to server",
+          () => handleRegister(e)
+        );
+      } else {
+        enhancedToast.error("Registration Failed", {
+          description: message,
+          duration: 6000,
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -134,6 +175,14 @@ export default function Register() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {/* Connection Status Banner */}
+      <ConnectionStatusBanner
+        isConnected={!backendError}
+        isLoading={isRetrying}
+        error={backendError}
+        onRetry={handleRetryConnection}
+      />
+      
       {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="container flex items-center justify-between h-16">

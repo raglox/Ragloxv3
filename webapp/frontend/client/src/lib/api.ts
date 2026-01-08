@@ -283,8 +283,8 @@ async function fetchWithRetry<T>(
 export interface RegisterRequest {
   email: string;
   password: string;
-  full_name: string;
-  organization?: string;
+  fullname: string;
+  organization_name?: string;
   vm_config?: {
     plan_id: string;
     location_id: string;
@@ -384,7 +384,7 @@ export const authApi = {
   },
 
   // Update profile
-  updateProfile: async (data: { full_name?: string; organization?: string }): Promise<User> => {
+  updateProfile: async (data: { fullname?: string; organization_name?: string }): Promise<User> => {
     return fetchApi<User>("/api/v1/auth/me", {
       method: "PUT",
       body: JSON.stringify(data),
