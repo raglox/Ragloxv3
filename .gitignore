@@ -1,6 +1,18 @@
 # ═══════════════════════════════════════════════════════════════
-# RAGLOX v3.0 - Git Ignore
+# RAGLOX v3.0 - Git Ignore Configuration
 # ═══════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════
+# Environment Variables & Secrets
+# ═══════════════════════════════════════════════════════════════
+.env
+.env.local
+.env.*.local
+.env~
+.git-credentials
+*.pem
+*.key
+*.crt
 
 # ═══════════════════════════════════════════════════════════════
 # Python
@@ -18,126 +30,110 @@ eggs/
 .eggs/
 lib/
 lib64/
-# But don't ignore frontend lib
-!webapp/frontend/src/lib/
 parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual environments
-.venv
+# Virtual Environment
 venv/
-ENV/
 env/
+ENV/
+env.bak/
+venv.bak/
 
 # ═══════════════════════════════════════════════════════════════
-# IDE
-# ═══════════════════════════════════════════════════════════════
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.project
-.pydevproject
-.settings/
-
-# ═══════════════════════════════════════════════════════════════
-# Testing
+# Testing & Coverage
 # ═══════════════════════════════════════════════════════════════
 .pytest_cache/
 .coverage
+coverage.json
 htmlcov/
 .tox/
 .nox/
-coverage.xml
-*.cover
 .hypothesis/
+*.cover
+*.log
+test_results.txt
 
 # ═══════════════════════════════════════════════════════════════
-# Type Checking
-# ═══════════════════════════════════════════════════════════════
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# ═══════════════════════════════════════════════════════════════
-# Environment
-# ═══════════════════════════════════════════════════════════════
-.env
-.env.local
-.env.*.local
-*.env
-
-# Keep .env.example
-!.env.example
-!infrastructure/.env.example
-
-# ═══════════════════════════════════════════════════════════════
-# Docker
+# Logs & Databases
 # ═══════════════════════════════════════════════════════════════
 *.log
+*.db
+*.sqlite
+*.sqlite3
+backend.log
+server.log
+server_new.log
+
+# ═══════════════════════════════════════════════════════════════
+# IDE & Editors
+# ═══════════════════════════════════════════════════════════════
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ═══════════════════════════════════════════════════════════════
+# Node.js & Frontend
+# ═══════════════════════════════════════════════════════════════
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.vite/
+dist/
+
+# ═══════════════════════════════════════════════════════════════
+# Data & Uploads
+# ═══════════════════════════════════════════════════════════════
+data/*.json
+data/breach_data/
+data/c2/
+uploads/
+evidence/
+reports/
+payloads/
+
+# Keep data directory structure
+!data/.gitkeep
+!data/breach_data/.gitkeep
+!data/c2/.gitkeep
+
+# ═══════════════════════════════════════════════════════════════
+# Temporary Files
+# ═══════════════════════════════════════════════════════════════
+*.tmp
+*.temp
+*.cache
+.cache/
+
+# ═══════════════════════════════════════════════════════════════
+# Infrastructure & Docker
+# ═══════════════════════════════════════════════════════════════
+infrastructure/.env
+infrastructure/.env.local
 docker-compose.override.yml
 
 # ═══════════════════════════════════════════════════════════════
-# Data & Secrets
+# GitHub Actions (keep workflows but ignore cache)
 # ═══════════════════════════════════════════════════════════════
-*.pem
-*.key
-*.crt
-*.p12
-secrets/
-credentials/
+# .github/workflows/ - Keep this!
+.github/cache/
 
 # ═══════════════════════════════════════════════════════════════
-# Logs
+# Backups
 # ═══════════════════════════════════════════════════════════════
-logs/
-*.log
-
-# ═══════════════════════════════════════════════════════════════
-# OS
-# ═══════════════════════════════════════════════════════════════
-.DS_Store
-Thumbs.db
-
-# ═══════════════════════════════════════════════════════════════
-# Build
-# ═══════════════════════════════════════════════════════════════
-*.pyc
-*.pyo
-*.pyd
-
-# ═══════════════════════════════════════════════════════════════
-# Documentation
-# ═══════════════════════════════════════════════════════════════
-site/
-docs/_build/
-
-# ═══════════════════════════════════════════════════════════════
-# Jupyter Notebooks
-# ═══════════════════════════════════════════════════════════════
-.ipynb_checkpoints
-*.ipynb_checkpoints
-
-# ═══════════════════════════════════════════════════════════════
-# Temporary files
-# ═══════════════════════════════════════════════════════════════
-tmp/
-temp/
-*.tmp
-*.temp
-
-# ═══════════════════════════════════════════════════════════════
-# Frontend (Node.js/React)
-# ═══════════════════════════════════════════════════════════════
-node_modules/
-webapp/frontend/dist/
-webapp/frontend/.vite/
-*.tsbuildinfo
-data/raglox_nuclei_templates.json
-.git-credentials
+*_backup/
+*_backup_*/
+*.bak
