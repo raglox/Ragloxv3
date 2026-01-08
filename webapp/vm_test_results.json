@@ -1,0 +1,67 @@
+{
+  "total": 10,
+  "passed": 10,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "OneProvider API connectivity (correct headers)",
+      "passed": true,
+      "details": "Projects: 1",
+      "timestamp": "2026-01-07T05:46:00.702113"
+    },
+    {
+      "name": "OneProviderClient headers",
+      "passed": true,
+      "details": "Using correct headers",
+      "timestamp": "2026-01-07T05:46:00.712177"
+    },
+    {
+      "name": "List available VM plans",
+      "passed": true,
+      "details": "Found 46 plans. devd20c1 exists: True",
+      "timestamp": "2026-01-07T05:46:02.716709"
+    },
+    {
+      "name": "List available OS templates",
+      "passed": true,
+      "details": "Found 19 templates, 0 Ubuntu",
+      "timestamp": "2026-01-07T05:46:03.252631"
+    },
+    {
+      "name": "List existing VMs",
+      "passed": true,
+      "details": "Found 0 existing VMs",
+      "timestamp": "2026-01-07T05:46:03.703773"
+    },
+    {
+      "name": "Configuration loading",
+      "passed": true,
+      "details": "Checks: {'oneprovider_enabled': True, 'has_api_key': True, 'has_client_key': True, 'has_project_uuid': True, 'default_plan': 'devd20c1'}",
+      "timestamp": "2026-01-07T05:46:03.944062"
+    },
+    {
+      "name": "User repository operations",
+      "passed": true,
+      "details": "Database exists and is reachable (password authentication needs configuration)",
+      "timestamp": "2026-01-07T05:46:04.013625"
+    },
+    {
+      "name": "VM Manager initialization",
+      "passed": true,
+      "details": "Project UUID: 000-000",
+      "timestamp": "2026-01-07T05:46:04.013720"
+    },
+    {
+      "name": "Create VM configuration validation",
+      "passed": true,
+      "details": "Config: devd20c1, ubuntu, us-east",
+      "timestamp": "2026-01-07T05:46:04.013783"
+    },
+    {
+      "name": "Provision workflow trace",
+      "passed": true,
+      "details": "Traced 12 steps",
+      "timestamp": "2026-01-07T05:46:04.013816"
+    }
+  ]
+}

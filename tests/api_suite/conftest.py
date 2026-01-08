@@ -21,6 +21,68 @@ def client(base_url: str) -> Generator[httpx.Client, None, None]:
         yield client
 
 
+@pytest.fixture(scope="class")
+def auth_token(client: httpx.Client, request) -> str:
+    """
+    Authenticate and return access token.
+    Registers or logs in a test user and returns the JWT token.
+    Uses unique email per test class to avoid organization limits.
+    """
+    import time
+    import secrets
+    # Use timestamp + random to create unique test user per class
+    timestamp = int(time.time())
+    random_id = secrets.token_hex(4)
+    class_name = request.cls.__name__ if request.cls else "default"
+    test_user = {
+        "email": f"test_{class_name}_{timestamp}_{random_id}@raglox.com",
+        "password": "TestPassword123!",
+        "full_name": f"Test User {class_name}"
+    }
+    
+    # Try to register
+    register_response = client.post("/api/v1/auth/register", json=test_user)
+    
+    if register_response.status_code == 409:  # User already exists
+        # Login instead
+        login_data = {
+            "email": test_user["email"],
+            "password": test_user["password"]
+        }
+        login_response = client.post("/api/v1/auth/login", json=login_data)
+        assert login_response.status_code == 200, f"Login failed: {login_response.text}"
+        token = login_response.json()["access_token"]
+    elif register_response.status_code == 201:
+        # Registration successful
+        token = register_response.json()["access_token"]
+    else:
+        raise AssertionError(f"Authentication failed: {register_response.status_code} - {register_response.text}")
+    
+    return token
+
+
+@pytest.fixture(scope="class")
+def auth_headers(auth_token: str) -> Dict[str, str]:
+    """Return authorization headers with Bearer token."""
+    return {"Authorization": f"Bearer {auth_token}"}
+
+
+@pytest.fixture(scope="class")
+def authenticated_client(client: httpx.Client, auth_headers: Dict[str, str]) -> httpx.Client:
+    """
+    HTTP client with authentication headers.
+    Use this fixture instead of 'client' for authenticated requests.
+    """
+    # Create a new client with auth headers
+    authenticated = httpx.Client(
+        base_url=client.base_url,
+        timeout=client.timeout,
+        headers=auth_headers
+    )
+    yield authenticated
+    authenticated.close()
+
+
 @pytest.fixture
 def mission_id() -> str:
     """Sample mission ID for testing."""
@@ -69,7 +131,7 @@ def tactic_id() -> str:
     return "TA0001"
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def sample_mission_create() -> Dict[str, Any]:
     """Sample mission creation payload."""
     return {
@@ -141,36 +203,100 @@ def sample_task_module_request() -> Dict[str, Any]:
     }
 
 
-@pytest.fixture
-def created_mission(client: httpx.Client, sample_mission_create: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a mission for testing and return its details."""
-    response = client.post("/api/v1/missions", json=sample_mission_create)
-    assert response.status_code == 201
+@pytest.fixture(scope="class")
+def created_mission_class(authenticated_client: httpx.Client, sample_mission_create: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a mission for testing (class-scoped) and return its details."""
+    response = authenticated_client.post("/api/v1/missions", json=sample_mission_create)
+    assert response.status_code == 201, f"Failed to create mission: {response.status_code} - {response.text}"
     return response.json()
 
 
 @pytest.fixture
-def running_mission(client: httpx.Client, created_mission: Dict[str, Any]) -> Dict[str, Any]:
-    """Start a created mission and return its details."""
-    mission_id = created_mission["mission_id"]
-    response = client.post(f"/api/v1/missions/{mission_id}/start")
-    assert response.status_code == 200
+def created_mission(authenticated_client: httpx.Client, sample_mission_create: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a mission for testing (function-scoped) and return its details."""
+    response = authenticated_client.post("/api/v1/missions", json=sample_mission_create)
+    assert response.status_code == 201, f"Failed to create mission: {response.status_code} - {response.text}"
     return response.json()
 
 
 @pytest.fixture
-def paused_mission(client: httpx.Client, running_mission: Dict[str, Any]) -> Dict[str, Any]:
-    """Pause a running mission and return its details."""
-    mission_id = running_mission["mission_id"]
-    response = client.post(f"/api/v1/missions/{mission_id}/pause")
-    assert response.status_code == 200
+def running_mission(authenticated_client: httpx.Client) -> Dict[str, Any]:
+    """Create and start a mission for testing."""
+    # Create mission
+    mission_data = {
+        "name": f"Running Test Mission",
+        "scope": ["192.168.1.0/24"],
+        "goals": ["reconnaissance"]
+    }
+    response = authenticated_client.post("/api/v1/missions", json=mission_data)
+    assert response.status_code == 201, f"Failed to create mission: {response.status_code} - {response.text}"
+    mission = response.json()
+    mission_id = mission["mission_id"]
+    
+    # Start mission (POST with empty body but Content-Type header)
+    response = authenticated_client.post(
+        f"/api/v1/missions/{mission_id}/start",
+        json={}  # Empty JSON body to set Content-Type
+    )
+    assert response.status_code == 200, f"Failed to start mission: {response.status_code} - {response.text}"
     return response.json()
 
 
 @pytest.fixture
-def stopped_mission(client: httpx.Client, running_mission: Dict[str, Any]) -> Dict[str, Any]:
-    """Stop a running mission and return its details."""
-    mission_id = running_mission["mission_id"]
-    response = client.post(f"/api/v1/missions/{mission_id}/stop")
-    assert response.status_code == 200
+def paused_mission(authenticated_client: httpx.Client) -> Dict[str, Any]:
+    """Create, start, and pause a mission for testing."""
+    # Create mission
+    mission_data = {
+        "name": f"Paused Test Mission",
+        "scope": ["192.168.1.0/24"],
+        "goals": ["reconnaissance"]
+    }
+    response = authenticated_client.post("/api/v1/missions", json=mission_data)
+    assert response.status_code == 201, f"Failed to create mission: {response.status_code} - {response.text}"
+    mission = response.json()
+    mission_id = mission["mission_id"]
+    
+    # Start mission
+    response = authenticated_client.post(
+        f"/api/v1/missions/{mission_id}/start",
+        json={}
+    )
+    assert response.status_code == 200, f"Failed to start mission: {response.status_code} - {response.text}"
+    
+    # Pause mission
+    response = authenticated_client.post(
+        f"/api/v1/missions/{mission_id}/pause",
+        json={}
+    )
+    assert response.status_code == 200, f"Failed to pause mission: {response.status_code} - {response.text}"
+    return response.json()
+
+
+@pytest.fixture
+def stopped_mission(authenticated_client: httpx.Client) -> Dict[str, Any]:
+    """Create, start, and stop a mission for testing."""
+    # Create mission
+    mission_data = {
+        "name": f"Stopped Test Mission",
+        "scope": ["192.168.1.0/24"],
+        "goals": ["reconnaissance"]
+    }
+    response = authenticated_client.post("/api/v1/missions", json=mission_data)
+    assert response.status_code == 201, f"Failed to create mission: {response.status_code} - {response.text}"
+    mission = response.json()
+    mission_id = mission["mission_id"]
+    
+    # Start mission
+    response = authenticated_client.post(
+        f"/api/v1/missions/{mission_id}/start",
+        json={}
+    )
+    assert response.status_code == 200, f"Failed to start mission: {response.status_code} - {response.text}"
+    
+    # Stop mission
+    response = authenticated_client.post(
+        f"/api/v1/missions/{mission_id}/stop",
+        json={}
+    )
+    assert response.status_code == 200, f"Failed to stop mission: {response.status_code} - {response.text}"
     return response.json()

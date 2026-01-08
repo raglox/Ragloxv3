@@ -1,0 +1,214 @@
+# Docker Compose for RAGLOX V3 Production Testing
+# This configuration sets up a complete test environment with real infrastructure
+
+version: '3.8'
+
+services:
+  # ==========================================
+  # PostgreSQL Test Database
+  # ==========================================
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: raglox-postgres-test
+    environment:
+      POSTGRES_DB: raglox_test_production
+      POSTGRES_USER: raglox_test
+      POSTGRES_PASSWORD: test_password_secure_123
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    ports:
+      - "5433:5432"  # Avoid conflict with local PostgreSQL
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+      - ./tests/production/init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - raglox-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raglox_test -d raglox_test_production"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ==========================================
+  # Redis Test Instance
+  # ==========================================
+  redis-test:
+    image: redis:7-alpine
+    container_name: raglox-redis-test
+    ports:
+      - "6380:6379"  # Avoid conflict with local Redis
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-test-data:/data
+    networks:
+      - raglox-test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  # ==========================================
+  # RAGLOX API (Production Build)
+  # ==========================================
+  raglox-api-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: raglox-api-test
+    environment:
+      # Database
+      DATABASE_HOST: postgres-test
+      DATABASE_PORT: 5432
+      DATABASE_NAME: raglox_test_production
+      DATABASE_USER: raglox_test
+      DATABASE_PASSWORD: test_password_secure_123
+      DATABASE_URL: postgresql://raglox_test:test_password_secure_123@postgres-test:5432/raglox_test_production
+      
+      # Redis
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_URL: redis://redis-test:6379/0
+      
+      # API Configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      DEBUG: "false"
+      DEV_MODE: "false"
+      
+      # LLM Configuration (for testing)
+      LLM_ENABLED: "true"
+      LLM_PROVIDER: openai
+      LLM_MODEL: gpt-3.5-turbo
+      LLM_API_KEY: ${OPENAI_API_KEY:-sk-test-key}
+      
+      # Security
+      JWT_SECRET_KEY: test-secret-key-for-production-tests-only
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION_MINUTES: 60
+      
+      # Safety Settings
+      EXPLOIT_DISABLED: "true"
+      MAX_CONCURRENT_MISSIONS: 10
+      MAX_MISSIONS_PER_MONTH: 1000
+      
+      # Logging
+      LOG_LEVEL: INFO
+    ports:
+      - "8001:8000"  # Avoid conflict with local API
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    networks:
+      - raglox-test-network
+      - test-target-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+
+  # ==========================================
+  # Test Target 1: DVWA (Damn Vulnerable Web App)
+  # ==========================================
+  test-target-dvwa:
+    image: vulnerables/web-dvwa:latest
+    container_name: raglox-target-dvwa
+    ports:
+      - "8080:80"
+    networks:
+      test-target-network:
+        ipv4_address: 192.168.100.10
+    environment:
+      MYSQL_ROOT_PASSWORD: dvwa_root
+      MYSQL_DATABASE: dvwa
+      MYSQL_USER: dvwa
+      MYSQL_PASSWORD: dvwa
+    restart: unless-stopped
+
+  # ==========================================
+  # Test Target 2: WebGoat (OWASP Testing App)
+  # ==========================================
+  test-target-webgoat:
+    image: webgoat/webgoat:latest
+    container_name: raglox-target-webgoat
+    ports:
+      - "8081:8080"
+    networks:
+      test-target-network:
+        ipv4_address: 192.168.100.11
+    environment:
+      WEBGOAT_HOST: 0.0.0.0
+      WEBGOAT_PORT: 8080
+    restart: unless-stopped
+
+  # ==========================================
+  # Test Target 3: Juice Shop (Modern Vulnerable App)
+  # ==========================================
+  test-target-juiceshop:
+    image: bkimminich/juice-shop:latest
+    container_name: raglox-target-juiceshop
+    ports:
+      - "8082:3000"
+    networks:
+      test-target-network:
+        ipv4_address: 192.168.100.12
+    restart: unless-stopped
+
+  # ==========================================
+  # Test Target 4: Simple Web Server (for basic tests)
+  # ==========================================
+  test-target-nginx:
+    image: nginx:alpine
+    container_name: raglox-target-nginx
+    ports:
+      - "8083:80"
+    networks:
+      test-target-network:
+        ipv4_address: 192.168.100.13
+    volumes:
+      - ./tests/production/nginx-test-config:/etc/nginx/conf.d
+    restart: unless-stopped
+
+# ==========================================
+# Networks
+# ==========================================
+networks:
+  # Main test network for services
+  raglox-test-network:
+    driver: bridge
+    name: raglox-test-network
+  
+  # Isolated network for test targets
+  test-target-network:
+    driver: bridge
+    name: test-target-network
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.100.0/24
+          gateway: 192.168.100.1
+
+# ==========================================
+# Volumes
+# ==========================================
+volumes:
+  postgres-test-data:
+    name: raglox-postgres-test-data
+  redis-test-data:
+    name: raglox-redis-test-data

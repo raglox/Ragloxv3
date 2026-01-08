@@ -34,9 +34,9 @@ class VMStatus(str, Enum):
 class VMConfiguration:
     """VM configuration specification"""
     hostname: str
-    plan_id: str = "8GB-2CORE"  # Default: 8GB RAM, 2 Cores
-    os_id: str = "ubuntu-22.04"  # Default: Ubuntu 22.04
-    location_id: str = "us-east"  # Default location
+    plan_id: str = "86"  # Default: devd20c1 (1GB RAM, 1 Core, Paris)
+    os_id: str = "1197"  # Default: Ubuntu 22.04.5 64-bit
+    location_id: str = "34"  # Default: Paris, France
     ssh_keys: List[str] = field(default_factory=list)
     password: Optional[str] = None
     ipv6: bool = False
@@ -378,25 +378,38 @@ class VMManager:
         Parse VM data from API response
         
         Args:
-            vm_data: VM data from API
+            vm_data: VM data from API (OneProvider format)
             tags: Additional tags
         
         Returns:
             VMInstance
+        
+        Note:
+            OneProvider API returns different field names:
+            - id (not vm_id)
+            - domain (not hostname)
+            - domainstatus (not state)
+            - dedicatedip (not ipv4)
         """
-        # Determine status
-        state = vm_data.get("state", "").lower()
+        # Extract data from OneProvider response format
+        # OneProvider returns nested: {"result": "success", "response": {...}}
+        if "response" in vm_data:
+            vm_data = vm_data["response"]
+        
+        # Determine status from domainstatus
+        status_str = vm_data.get("domainstatus", "").lower()
         is_installing = vm_data.get("is_installing", False)
         
-        if is_installing:
+        if is_installing or status_str == "pending":
             status = VMStatus.CREATING
-        elif state == "running":
-            status = VMStatus.READY if not is_installing else VMStatus.CREATING
-        elif state == "stopped":
+        elif status_str in ["active", "running"]:
+            status = VMStatus.READY
+        elif status_str in ["stopped", "suspended"]:
             status = VMStatus.STOPPED
-        elif state in ["destroying", "destroyed"]:
+        elif status_str in ["terminated", "cancelled"]:
             status = VMStatus.DESTROYED
         else:
+            # Unknown status, mark as error
             status = VMStatus.ERROR
         
         # Parse timestamps
@@ -411,24 +424,33 @@ class VMManager:
         
         # Parse bandwidth
         bandwidth_data = vm_data.get("bandwidth", {})
-        bandwidth_used = bandwidth_data.get("total_used_gb", 0.0)
-        bandwidth_limit = bandwidth_data.get("limit_gb")
+        bandwidth_used = float(vm_data.get("bandwidth", 0)) if isinstance(vm_data.get("bandwidth"), (int, float, str)) else 0.0
+        bandwidth_limit = None
+        
+        # Extract IP address (could be dedicatedip or ip_address)
+        ipv4 = vm_data.get("dedicatedip") or vm_data.get("ip_address")
+        ipv6 = vm_data.get("ipv6")
+        
+        # Extract specs
+        cores = int(vm_data.get("cores", 0)) if vm_data.get("cores") else 0
+        memory = int(vm_data.get("memory", 0)) if vm_data.get("memory") else 0
+        storage = int(vm_data.get("storage", 0)) if vm_data.get("storage") else 0
         
         # Create instance
         return VMInstance(
-            vm_id=vm_data.get("vm_id", ""),
-            hostname=vm_data.get("hostname", ""),
+            vm_id=vm_data.get("id", ""),  # OneProvider uses "id"
+            hostname=vm_data.get("domain", ""),  # OneProvider uses "domain"
             status=status,
             project_uuid=vm_data.get("project_uuid", ""),
             plan_id=vm_data.get("plan_id", ""),
-            os_id=vm_data.get("os_id", ""),
-            location_id=vm_data.get("location_id", ""),
-            ipv4=vm_data.get("ipv4"),
-            ipv6=vm_data.get("ipv6"),
+            os_id=vm_data.get("operatingSystem", ""),  # OneProvider format
+            location_id=vm_data.get("locationId", ""),  # OneProvider uses "locationId"
+            ipv4=ipv4,
+            ipv6=ipv6,
             private_ip=vm_data.get("private_ip"),
-            cpu_cores=vm_data.get("cpu_cores", 0),
-            memory_mb=vm_data.get("memory_mb", 0),
-            disk_gb=vm_data.get("disk_gb", 0),
+            cpu_cores=cores,
+            memory_mb=memory,
+            disk_gb=storage,
             bandwidth_used_gb=bandwidth_used,
             bandwidth_limit_gb=bandwidth_limit,
             is_installing=is_installing,
