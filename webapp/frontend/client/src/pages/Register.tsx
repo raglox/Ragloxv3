@@ -139,7 +139,7 @@ export default function Register() {
       const response = await authApi.register({
         email: formData.email,
         password: formData.password,
-        fullname: formData.fullName,
+        full_name: formData.fullName,
         organization_name: formData.organization || undefined,
       });
 

@@ -283,7 +283,7 @@ async function fetchWithRetry<T>(
 export interface RegisterRequest {
   email: string;
   password: string;
-  fullname: string;
+  full_name: string;
   organization_name?: string;
   vm_config?: {
     plan_id: string;
