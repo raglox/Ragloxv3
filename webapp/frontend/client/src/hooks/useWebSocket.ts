@@ -386,9 +386,17 @@ export function useWebSocket(
   // ============================================
 
   const fetchData = useCallback(async () => {
+    // Import getAuthHeaders for authenticated polling requests
+    const { getAuthHeaders } = await import("@/lib/api");
+    const authHeaders = getAuthHeaders();
+    const headers = {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    };
+
     try {
       // Fetch stats
-      const statsResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/stats`);
+      const statsResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/stats`, { headers });
       if (statsResponse.ok) {
         const stats = await statsResponse.json();
         handleMessage({
@@ -399,7 +407,7 @@ export function useWebSocket(
       }
 
       // Fetch approvals
-      const approvalsResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/approvals`);
+      const approvalsResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/approvals`, { headers });
       if (approvalsResponse.ok) {
         const approvals = await approvalsResponse.json();
         if (Array.isArray(approvals) && approvals.length > 0) {
@@ -414,7 +422,7 @@ export function useWebSocket(
       }
 
       // Fetch chat messages (latest 10)
-      const chatResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/chat?limit=10`);
+      const chatResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/chat?limit=10`, { headers });
       if (chatResponse.ok) {
         const messages = await chatResponse.json();
         if (Array.isArray(messages) && messages.length > 0) {
