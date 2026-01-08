@@ -36,7 +36,7 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: false,
-    host: true,
+    host: '0.0.0.0', // Bind to all IPv4 interfaces
     allowedHosts: "all",
     fs: {
       strict: true,
