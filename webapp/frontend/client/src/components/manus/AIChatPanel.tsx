@@ -142,29 +142,10 @@ export function AIChatPanel({
     });
   };
 
-  // Use real events if available, otherwise use demo data only if showDemoData is true
+  // Use real events only - no demo data to avoid confusion
   const displayEvents: EventCardType[] = useMemo(() => {
-    if (events.length > 0) {
-      return events;
-    }
-
-    // Only show demo data if explicitly requested
-    if (!showDemoData) {
-      return [];
-    }
-
-    // Demo events for testing UI
-    return [
-      {
-        id: "event-1",
-        title: "System Ready",
-        description: "RAGLOX is connected and ready to receive commands.",
-        status: "completed",
-        timestamp: new Date().toISOString(),
-        knowledge: [],
-      },
-    ];
-  }, [events, showDemoData]);
+    return events;
+  }, [events]);
 
   // Use real plan tasks if available
   const actualPlanTasks: PlanTask[] = useMemo(() => {
@@ -660,8 +641,8 @@ function ConnectionStatusIndicator({ connectionStatus }: { connectionStatus: Con
         </>
       ) : connectionStatus === "disabled" ? (
         <>
-          <WifiOff className="w-3 h-3" style={{ color: '#888888' }} />
-          <span className="text-xs" style={{ color: '#888888' }}>Demo Mode</span>
+          <WifiOff className="w-3 h-3" style={{ color: '#f59e0b' }} />
+          <span className="text-xs" style={{ color: '#f59e0b' }}>Polling Mode</span>
         </>
       ) : (
         <>
@@ -687,30 +668,30 @@ function InitialQuickActions({ onAction }: InitialQuickActionsProps) {
   const quickActions = [
     { 
       icon: Target, 
-      label: "Start Reconnaissance", 
-      description: "Scan and discover target assets",
-      action: "Start reconnaissance on target",
+      label: "Plan Mission", 
+      description: "Create an attack plan for targets",
+      action: "Help me create a penetration testing plan for my targets",
       color: "#4a9eff",
     },
     { 
       icon: Shield, 
-      label: "Vulnerability Scan", 
-      description: "Find security weaknesses",
-      action: "Scan for vulnerabilities",
+      label: "Check Environment", 
+      description: "Verify execution environment status",
+      action: "Check my execution environment status",
       color: "#f59e0b",
     },
     { 
       icon: Terminal, 
-      label: "Get Shell Access", 
-      description: "Attempt to establish shell",
-      action: "Attempt to get shell access",
+      label: "Execute Command", 
+      description: "Run a command on the target",
+      action: "I want to execute a command on the target",
       color: "#4ade80",
     },
     { 
       icon: Sparkles, 
-      label: "Autonomous Mode", 
-      description: "Let RAGLOX work autonomously",
-      action: "Run in autonomous mode",
+      label: "Get Status", 
+      description: "View mission progress and findings",
+      action: "Show me the current mission status and findings",
       color: "#a78bfa",
     },
   ];
