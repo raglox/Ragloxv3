@@ -254,8 +254,20 @@ async def create_access_token(
     return token, expires_seconds
 
 
-def decode_token(token: str) -> Optional[Dict[str, Any]]:
-    """Decode and validate JWT token."""
+def decode_token(token: str, raise_on_error: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Decode and validate JWT token.
+    
+    Args:
+        token: JWT token to decode
+        raise_on_error: If True, raise HTTPException on invalid token
+        
+    Returns:
+        Decoded payload or None
+        
+    Raises:
+        HTTPException: If raise_on_error=True and token is invalid
+    """
     settings = get_settings()
     
     try:
@@ -267,9 +279,21 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
         return payload
     except jwt.ExpiredSignatureError:
         logger.warning("Token expired")
+        if raise_on_error:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return None
     except jwt.InvalidTokenError as e:
         logger.warning(f"Invalid token: {e}")
+        if raise_on_error:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token format or signature",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return None
 
 
@@ -308,14 +332,8 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Decode JWT
-    payload = decode_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    # Decode JWT with error raising enabled
+    payload = decode_token(token, raise_on_error=True)
     
     user_id = payload.get("sub")
     org_id = payload.get("org")
