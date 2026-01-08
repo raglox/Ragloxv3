@@ -102,6 +102,7 @@ export default function Operations() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [events, setEvents] = useState<EventCard[]>([]);
   const [planTasks, setPlanTasks] = useState<PlanTask[]>([]);
+  const [isAITyping, setIsAITyping] = useState(false);  // Track AI typing state
   
   // Command history for playback
   const [commandHistory, setCommandHistory] = useState<CommandHistoryEntry[]>([]);
@@ -218,6 +219,10 @@ export default function Operations() {
         const newMsgs = newChatMessages.filter((m) => !existingIds.has(m.id));
         return [...prev, ...newMsgs];
       });
+      
+      // Check if any message is streaming
+      const hasStreamingMessage = newChatMessages.some((m) => m.status === "streaming");
+      setIsAITyping(hasStreamingMessage);
     }
   }, [newChatMessages]);
 
@@ -294,19 +299,41 @@ export default function Operations() {
   // Architecture: Hybrid approach for Red Team Operations
   // - HTTP POST: Send message & get immediate response (fallback)
   // - WebSocket: Receive real-time AI responses (primary)
+  // Enhanced with Optimistic Updates (Manus/Lovable-style)
   const handleSendMessage = useCallback(async (content: string) => {
-    // Add user message to local state immediately (optimistic update)
+    // Generate temporary ID for optimistic update
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Add user message to local state immediately (optimistic update with 'pending' status)
     const userMessage: ChatMessage = {
-      id: `msg-${Date.now()}`,
+      id: tempId,
+      tempId,
       role: "user",
       content,
       timestamp: new Date().toISOString(),
+      status: "pending", // Mark as pending
     };
     setChatMessages((prev) => [...prev, userMessage]);
+
+    // Update status to 'sending'
+    setChatMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === tempId ? { ...msg, status: "sending" as const } : msg
+      )
+    );
 
     // Try to send via API
     try {
       const response = await chatApi.send(missionId, content);
+      
+      // Update user message with server ID and mark as 'sent'
+      setChatMessages((prev) =>
+        prev.map((msg) =>
+          msg.tempId === tempId
+            ? { ...msg, id: response.id || tempId, status: "sent" as const, tempId: undefined }
+            : msg
+        )
+      );
 
       // Handle response based on role:
       // - "system": AI response received via HTTP (fallback when WebSocket unavailable)
@@ -362,12 +389,22 @@ export default function Operations() {
         errorDescription = error.message;
       }
 
+      // Mark user message as 'failed' and add error details
+      setChatMessages((prev) =>
+        prev.map((msg) =>
+          msg.tempId === tempId
+            ? { ...msg, status: "failed" as const, error: errorDescription }
+            : msg
+        )
+      );
+      
       // Add system response indicating error
       const errorResponse: ChatMessage = {
         id: `msg-error-${Date.now()}`,
         role: "system",
         content: `⚠️ ${errorMessage}: ${errorDescription}`,
         timestamp: new Date().toISOString(),
+        status: "sent",
       };
       setChatMessages((prev) => [...prev, errorResponse]);
 
@@ -721,6 +758,7 @@ export default function Operations() {
           onSendMessage={handleSendMessage}
           isConnected={isConnected}
           connectionStatus={wsStatus}
+          isAITyping={isAITyping}
           terminalOutput={terminalOutput}
           terminalTitle="Target Terminal"
           terminalSubtitle="RAGLOX is using Terminal"

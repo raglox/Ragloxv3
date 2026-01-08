@@ -27,6 +27,7 @@ interface DualPanelLayoutProps {
   onSendMessage: (content: string) => void;
   isConnected?: boolean;
   connectionStatus?: ConnectionStatus;
+  isAITyping?: boolean;  // NEW: AI typing indicator
 
   // Terminal data
   terminalOutput: string[];
@@ -69,6 +70,7 @@ export function DualPanelLayout({
   onSendMessage,
   isConnected,
   connectionStatus = "disconnected",
+  isAITyping = false,  // NEW: default false
   terminalOutput,
   terminalTitle = "Target Terminal",
   terminalSubtitle,
@@ -182,6 +184,7 @@ export function DualPanelLayout({
           onReject={onReject}
           isConnected={isConnected}
           connectionStatus={connectionStatus}
+          isAITyping={isAITyping}
           terminalLastCommand={getLastCommand()}
           showDemoData={showDemoData}
           className="h-full"

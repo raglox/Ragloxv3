@@ -53,6 +53,8 @@ interface AIChatPanelProps {
   className?: string;
   // Demo mode flag - when true, shows demo data if no real data available
   showDemoData?: boolean;
+  // Typing indicator - shows when AI is generating response
+  isAITyping?: boolean;
 }
 
 export function AIChatPanel({
@@ -70,11 +72,13 @@ export function AIChatPanel({
   terminalPreviewLines = [],
   className,
   showDemoData = false,
+  isAITyping = false,
 }: AIChatPanelProps) {
   const [inputValue, setInputValue] = useState("");
   const [isPlanExpanded, setIsPlanExpanded] = useState(false);
   const [collapsedEvents, setCollapsedEvents] = useState<Set<string>>(new Set());
   const [expandedKnowledge, setExpandedKnowledge] = useState<Set<string>>(new Set());
+  const [isSending, setIsSending] = useState(false);  // Track if message is being sent
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -98,9 +102,12 @@ export function AIChatPanel({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputValue.trim()) {
+    if (inputValue.trim() && !isSending && !isAITyping) {
+      setIsSending(true);
       onSendMessage(inputValue.trim());
       setInputValue("");
+      // Reset after a delay (will be cleared by parent's message update)
+      setTimeout(() => setIsSending(false), 1000);
     }
   };
 
@@ -245,9 +252,10 @@ export function AIChatPanel({
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Describe your security task..."
+                    placeholder={isSending || isAITyping ? "Please wait..." : "Describe your security task..."}
                     className="chat-input-field min-h-[40px] max-h-[200px] py-2"
                     rows={1}
+                    disabled={isSending || isAITyping || !isConnected}
                   />
 
                   {/* Right Icons */}
@@ -341,11 +349,14 @@ export function AIChatPanel({
                 <span className="agent-badge">v3.0</span>
               </div>
 
-              {/* Initial Message - only show if no events */}
-              {displayEvents.length === 0 && messages.length > 0 && (
-                <p className="text-foreground leading-relaxed">
-                  {messages[0]?.content || "Ready to assist with your security operations."}
-                </p>
+              {/* Chat Messages with Status Indicators */}
+              {messages.map((message) => (
+                <ChatMessageItem key={message.id || message.tempId} message={message} />
+              ))}
+
+              {/* AI Typing Indicator */}
+              {isAITyping && (
+                <TypingIndicator />
               )}
 
               {/* Event Cards */}
@@ -591,9 +602,10 @@ export function AIChatPanel({
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Send message to RAGLOX"
+                    placeholder={isSending || isAITyping ? "Please wait..." : "Send message to RAGLOX"}
                     className="chat-input-field min-h-[32px] max-h-[200px] py-1.5"
                     rows={1}
+                    disabled={isSending || isAITyping || !isConnected}
                   />
 
                   {/* Right Icons - Balanced */}
@@ -953,6 +965,145 @@ function QuickActionsBar({ onAction }: QuickActionsBarProps) {
             <span>{action.label}</span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// Typing Indicator Component
+// ============================================
+function TypingIndicator() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 10 }}
+      className="flex items-start gap-3"
+    >
+      <div 
+        className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" 
+        style={{ background: 'rgba(74, 158, 255, 0.15)' }}
+      >
+        <Brain className="w-4 h-4" style={{ color: '#4a9eff' }} />
+      </div>
+      <div className="flex-1">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-sm font-medium" style={{ color: '#e8e8e8' }}>RAGLOX</span>
+          <div className="flex items-center gap-1 text-xs" style={{ color: '#4a9eff' }}>
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>Typing...</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 py-2">
+          <motion.div
+            className="w-2 h-2 rounded-full"
+            style={{ background: '#4a9eff' }}
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1.5, repeat: Infinity, delay: 0 }}
+          />
+          <motion.div
+            className="w-2 h-2 rounded-full"
+            style={{ background: '#4a9eff' }}
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1.5, repeat: Infinity, delay: 0.2 }}
+          />
+          <motion.div
+            className="w-2 h-2 rounded-full"
+            style={{ background: '#4a9eff' }}
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1.5, repeat: Infinity, delay: 0.4 }}
+          />
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ============================================
+// Chat Message Item Component with Status Indicators
+// ============================================
+interface ChatMessageItemProps {
+  message: ChatMessage;
+}
+
+function ChatMessageItem({ message }: ChatMessageItemProps) {
+  const { role, content, status, error } = message;
+  
+  // Don't render empty content
+  if (!content) return null;
+  
+  // User message with status indicators
+  if (role === "user") {
+    return (
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-sm font-medium" style={{ color: '#e8e8e8' }}>You</span>
+            {/* Status Indicators */}
+            {status === "pending" && (
+              <div className="flex items-center gap-1 text-xs" style={{ color: '#888888' }}>
+                <Circle className="w-2 h-2 fill-current" />
+                <span>Sending...</span>
+              </div>
+            )}
+            {status === "sending" && (
+              <div className="flex items-center gap-1 text-xs" style={{ color: '#4a9eff' }}>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>Sending...</span>
+              </div>
+            )}
+            {status === "sent" && (
+              <div className="flex items-center gap-1 text-xs" style={{ color: '#4ade80' }}>
+                <Check className="w-3 h-3" />
+                <span>Sent</span>
+              </div>
+            )}
+            {status === "failed" && (
+              <div className="flex items-center gap-1 text-xs" style={{ color: '#ef4444' }}>
+                <Circle className="w-3 h-3 fill-current" />
+                <span>Failed</span>
+              </div>
+            )}
+          </div>
+          <p 
+            className="text-sm leading-relaxed"
+            style={{ 
+              color: status === "failed" ? '#ef4444' : '#e8e8e8',
+              opacity: status === "pending" || status === "sending" ? 0.7 : 1
+            }}
+          >
+            {content}
+          </p>
+          {error && (
+            <p className="text-xs mt-1" style={{ color: '#ef4444' }}>
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+  
+  // System/Assistant message
+  return (
+    <div className="flex items-start gap-3">
+      <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(74, 158, 255, 0.15)' }}>
+        <Brain className="w-4 h-4" style={{ color: '#4a9eff' }} />
+      </div>
+      <div className="flex-1">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-sm font-medium" style={{ color: '#e8e8e8' }}>RAGLOX</span>
+          {status === "streaming" && (
+            <div className="flex items-center gap-1 text-xs" style={{ color: '#4a9eff' }}>
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span>Typing...</span>
+            </div>
+          )}
+        </div>
+        <p className="text-sm leading-relaxed" style={{ color: '#e8e8e8' }}>
+          {content}
+        </p>
       </div>
     </div>
   );
