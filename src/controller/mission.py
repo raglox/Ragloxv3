@@ -219,6 +219,131 @@ class MissionController:
         self.logger.info(f"Mission created: {mission_id} (org: {organization_id})")
         return mission_id
     
+    # ═══════════════════════════════════════════════════════════════
+    # On-Demand VM Provisioning
+    # ═══════════════════════════════════════════════════════════════
+    
+    async def _ensure_vm_is_ready(
+        self,
+        user_id: str,
+        user_repo: Any
+    ) -> Dict[str, Any]:
+        """
+        Ensure VM is ready for mission execution (on-demand provisioning).
+        
+        This method implements lazy VM provisioning:
+        1. Check if VM already exists and is ready
+        2. If not, provision a new VM using Firecracker
+        3. Update user metadata with VM information
+        
+        Args:
+            user_id: User UUID string
+            user_repo: UserRepository instance
+            
+        Returns:
+            Dict containing VM information (vm_id, ip_address, etc.)
+            
+        Raises:
+            Exception: If VM provisioning fails
+        """
+        from uuid import UUID
+        from ..core.database.user_repository import User
+        from ..infrastructure.cloud_provider import get_cloud_provider_client
+        from ..api.auth_routes import VMProvisionStatus
+        
+        try:
+            user_uuid = UUID(user_id)
+        except ValueError:
+            raise ValueError(f"Invalid user_id: {user_id}")
+        
+        # Get user from database
+        user = await user_repo.get_by_id(user_uuid)
+        if not user or not user.metadata:
+            raise Exception(f"User {user_id} not found or has no metadata")
+        
+        vm_status = user.metadata.get("vm_status")
+        vm_info = user.metadata.get("vm_info", {})
+        
+        # Case 1: VM is already ready
+        if vm_status == VMProvisionStatus.READY.value and vm_info.get("ip_address"):
+            self.logger.info(
+                f"VM for user {user_id} is already ready at {vm_info.get('ip_address')}"
+            )
+            return vm_info
+        
+        # Case 2: VM is being created (wait or error)
+        if vm_status in [VMProvisionStatus.CREATING.value, VMProvisionStatus.CONFIGURING.value]:
+            raise Exception(
+                f"VM for user {user_id} is already being provisioned. Please wait."
+            )
+        
+        # Case 3: VM not created yet or stopped - provision new VM
+        self.logger.info(
+            f"VM for user {user_id} not found or not ready (status: {vm_status}). "
+            "Provisioning new Firecracker VM..."
+        )
+        
+        try:
+            # Update status to CREATING
+            await user_repo.update_vm_status(
+                user_uuid,
+                VMProvisionStatus.CREATING.value,
+                {"status_message": "Initiating Firecracker VM creation"}
+            )
+            
+            # Create VM using Firecracker
+            async with get_cloud_provider_client() as fc_client:
+                # Use user_id as unique VM identifier
+                vm_name = f"raglox-user-{user_id[:8]}"
+                
+                created_vm = await fc_client.create_vm(
+                    user_id=str(user_id),
+                    hostname=vm_name
+                )
+                
+                if not created_vm or not created_vm.get("ip_address"):
+                    raise Exception("VM created but no IP address was returned")
+                
+                # Prepare VM info for storage
+                vm_info = {
+                    "vm_id": created_vm.get("vm_id") or created_vm.get("vm_name"),
+                    "ip_address": created_vm["ip_address"],
+                    "ssh_user": "root",
+                    "ssh_password": created_vm.get("password", "raglox123"),
+                    "ssh_port": 22,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "provider": "firecracker"
+                }
+                
+                # Update status to READY with VM info
+                await user_repo.update_vm_status(
+                    user_uuid,
+                    VMProvisionStatus.READY.value,
+                    vm_info
+                )
+                
+                self.logger.info(
+                    f"✅ Successfully provisioned Firecracker VM for user {user_id}: "
+                    f"VM ID: {vm_info['vm_id']}, IP: {vm_info['ip_address']}"
+                )
+                
+                return vm_info
+                
+        except Exception as e:
+            self.logger.error(
+                f"Failed to provision VM for user {user_id}: {e}",
+                exc_info=True
+            )
+            # Update status to FAILED
+            await user_repo.update_vm_status(
+                user_uuid,
+                VMProvisionStatus.FAILED.value,
+                {"error_message": str(e)}
+            )
+            raise Exception(
+                f"Failed to provision execution environment: {e}"
+            ) from e
+    
     async def start_mission(self, mission_id: str) -> bool:
         """
         Start a mission.
@@ -241,6 +366,50 @@ class MissionController:
         current_status = mission_data.get("status")
         if current_status not in ("created", "paused"):
             self.logger.error(f"Cannot start mission in status: {current_status}")
+            return False
+        
+        # ═══════════════════════════════════════════════════════════
+        # On-Demand VM Provisioning: Ensure VM is ready before starting
+        # ═══════════════════════════════════════════════════════════
+        try:
+            # Get user_id from mission data (or created_by field)
+            user_id = mission_data.get("created_by") or mission_data.get("user_id")
+            if user_id:
+                # Import UserRepository
+                from ..core.database import UserRepository
+                from ..core.database.connection import get_db_pool
+                
+                # Get UserRepository instance
+                db_pool = get_db_pool()
+                if db_pool:
+                    user_repo = UserRepository(db_pool)
+                    
+                    # Ensure VM is ready (provision if needed)
+                    self.logger.info(f"Checking VM status for user {user_id}...")
+                    vm_info = await self._ensure_vm_is_ready(str(user_id), user_repo)
+                    self.logger.info(
+                        f"VM ready for mission {mission_id}: "
+                        f"IP {vm_info.get('ip_address')}"
+                    )
+                else:
+                    self.logger.warning(
+                        "Database pool not available. Skipping VM provisioning check."
+                    )
+            else:
+                self.logger.warning(
+                    f"No user_id found in mission {mission_id}. "
+                    "Skipping VM provisioning."
+                )
+        except Exception as e:
+            self.logger.error(
+                f"Failed to provision VM for mission {mission_id}: {e}",
+                exc_info=True
+            )
+            # Update mission status to failed
+            await self.blackboard.update_mission_status(
+                mission_id,
+                MissionStatus.FAILED
+            )
             return False
         
         # Update status to starting

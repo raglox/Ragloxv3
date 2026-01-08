@@ -95,7 +95,7 @@ class RegisterRequest(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=100, description="User full name")
     organization_name: Optional[str] = Field(None, max_length=100, description="Organization name (creates new org)")
     invite_code: Optional[str] = Field(None, description="Invitation code to join existing org")
-    vm_config: Optional[VMConfiguration] = Field(default_factory=VMConfiguration, description="VM configuration")
+    # vm_config removed: VM will be provisioned on-demand when first mission is created
     
     @field_validator("password")
     @classmethod
