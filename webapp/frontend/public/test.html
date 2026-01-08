@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RAGLOX Connection Test</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .result { margin: 10px 0; padding: 10px; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>RAGLOX Backend Connection Test</h1>
+    <button onclick="testHealth()">Test /health</button>
+    <button onclick="testApiHealth()">Test /api/v1/health</button>
+    <button onclick="testRegister()">Test Registration</button>
+    <div id="results"></div>
+    
+    <script>
+        const API_BASE = 'http://208.115.230.194:8000';
+        
+        async function testHealth() {
+            const results = document.getElementById('results');
+            results.innerHTML += '<div class="result">Testing /health...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                results.innerHTML += `<div class="result success">✅ /health: ${JSON.stringify(data)}</div>`;
+            } catch (error) {
+                results.innerHTML += `<div class="result error">❌ /health: ${error.message}</div>`;
+            }
+        }
+        
+        async function testApiHealth() {
+            const results = document.getElementById('results');
+            results.innerHTML += '<div class="result">Testing /api/v1/health...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/health`);
+                const data = await response.json();
+                results.innerHTML += `<div class="result success">✅ /api/v1/health: ${JSON.stringify(data)}</div>`;
+            } catch (error) {
+                results.innerHTML += `<div class="result error">❌ /api/v1/health: ${error.message}</div>`;
+            }
+        }
+        
+        async function testRegister() {
+            const results = document.getElementById('results');
+            results.innerHTML += '<div class="result">Testing registration...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: 'test' + Date.now() + '@example.com',
+                        password: 'testpass123',
+                        fullname: 'Test User',
+                        organization_name: 'Test Org'
+                    })
+                });
+                const data = await response.json();
+                results.innerHTML += `<div class="result success">✅ Registration: ${JSON.stringify(data).substring(0, 200)}...</div>`;
+            } catch (error) {
+                results.innerHTML += `<div class="result error">❌ Registration: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
