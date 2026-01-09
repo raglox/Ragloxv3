@@ -2247,7 +2247,13 @@ class MissionController:
     
     async def _get_llm_response(self, mission_id: str, user_message: str) -> str:
         """
-        Get LLM response for a chat message.
+        Get LLM response for a chat message using the HackerAgent.
+        
+        The HackerAgent provides:
+        - Tool-based execution (shell, network scanning, etc.)
+        - Hacker mindset for penetration testing
+        - Environment verification
+        - Intelligent planning
         
         Args:
             mission_id: Mission ID
@@ -2255,6 +2261,165 @@ class MissionController:
             
         Returns:
             LLM response or fallback message
+        """
+        try:
+            from ..core.agent import HackerAgent
+            from ..core.agent.base import AgentContext
+            
+            # Build agent context
+            context = await self._build_agent_context(mission_id)
+            
+            # Get or create the hacker agent
+            if not hasattr(self, '_hacker_agent'):
+                self._hacker_agent = HackerAgent(logger=self.logger)
+            
+            # Process message through the agent
+            response = await self._hacker_agent.process(user_message, context)
+            
+            # Broadcast AI plan if tasks were created
+            if response.plan_tasks:
+                try:
+                    from ..api.websocket import broadcast_ai_plan
+                    await broadcast_ai_plan(
+                        mission_id=mission_id,
+                        tasks=response.plan_tasks,
+                        message="Agent is executing plan",
+                        reasoning=f"Processing: {user_message[:50]}..."
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast AI plan: {e}")
+            
+            # Broadcast terminal output for commands executed
+            if response.commands_executed:
+                try:
+                    from ..api.websocket import broadcast_terminal_output
+                    for cmd in response.commands_executed:
+                        await broadcast_terminal_output(
+                            mission_id=mission_id,
+                            command=cmd.get("command", ""),
+                            output=cmd.get("output", ""),
+                            exit_code=cmd.get("exit_code", 0),
+                            status="completed" if cmd.get("success") else "failed"
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast terminal output: {e}")
+            
+            if response.content:
+                return response.content
+            else:
+                return "🤖 I've processed your request. Use 'help' to see available commands."
+                
+        except ImportError as e:
+            self.logger.warning(f"Agent module not available: {e}, using simple LLM")
+            return await self._get_simple_llm_response(mission_id, user_message)
+        except Exception as e:
+            self.logger.error(f"Agent error: {e}", exc_info=True)
+            return await self._get_simple_llm_response(mission_id, user_message)
+    
+    async def _build_agent_context(self, mission_id: str) -> "AgentContext":
+        """Build AgentContext from mission data."""
+        from ..core.agent.base import AgentContext
+        
+        # Get mission status
+        status = await self.get_mission_status(mission_id)
+        
+        # Get user VM info
+        vm_status = "unknown"
+        vm_ip = None
+        user_id = ""
+        org_id = ""
+        
+        if status:
+            user_id = status.get("created_by", "")
+            org_id = status.get("organization_id", "")
+            
+            # Try to get VM info from user metadata
+            if user_id:
+                try:
+                    from ..core.database.user_repository import UserRepository
+                    from ..core.database.connection import get_db_pool
+                    from uuid import UUID
+                    
+                    db_pool = get_db_pool()
+                    if db_pool:
+                        user_repo = UserRepository(db_pool)
+                        user = await user_repo.get_by_id(UUID(user_id))
+                        if user and user.metadata:
+                            vm_status = user.metadata.get("vm_status", "unknown")
+                            vm_ip = user.metadata.get("vm_ip")
+                except Exception as e:
+                    self.logger.warning(f"Could not get VM info: {e}")
+        
+        # Get mission data
+        targets = []
+        vulnerabilities = []
+        credentials = []
+        sessions = []
+        goals = []
+        
+        try:
+            blackboard = self.blackboard
+            
+            # Get targets
+            target_keys = await blackboard.get_mission_targets(mission_id)
+            for key in target_keys[:10]:  # Limit for context
+                target_id = key.replace("target:", "")
+                target_data = await blackboard.get_target(target_id)
+                if target_data:
+                    targets.append(target_data)
+            
+            # Get vulnerabilities
+            vuln_keys = await blackboard.get_mission_vulns(mission_id)
+            for key in vuln_keys[:10]:
+                vuln_id = key.replace("vuln:", "")
+                vuln_data = await blackboard.get_vulnerability(vuln_id)
+                if vuln_data:
+                    vulnerabilities.append(vuln_data)
+            
+            # Get credentials
+            cred_keys = await blackboard.get_mission_creds(mission_id)
+            for key in cred_keys[:10]:
+                cred_id = key.replace("cred:", "")
+                cred_data = await blackboard.get_credential(cred_id)
+                if cred_data:
+                    credentials.append(cred_data)
+            
+            # Get goals
+            goals_dict = await blackboard.get_mission_goals(mission_id)
+            goals = list(goals_dict.keys()) if goals_dict else []
+            
+        except Exception as e:
+            self.logger.warning(f"Error getting mission data for context: {e}")
+        
+        # Get chat history
+        chat_history = []
+        history = self._chat_history.get(mission_id, [])
+        for msg in history[-10:]:  # Last 10 messages
+            chat_history.append({
+                "role": msg.role,
+                "content": msg.content
+            })
+        
+        return AgentContext(
+            mission_id=mission_id,
+            user_id=user_id,
+            organization_id=org_id,
+            vm_status=vm_status,
+            vm_ip=vm_ip,
+            ssh_connected=self.environment_manager is not None,
+            targets=targets,
+            vulnerabilities=vulnerabilities,
+            credentials=credentials,
+            sessions=sessions,
+            goals=goals,
+            chat_history=chat_history
+        )
+    
+    async def _get_simple_llm_response(self, mission_id: str, user_message: str) -> str:
+        """
+        Fallback simple LLM response without agent capabilities.
+        
+        Used when HackerAgent is not available.
         """
         try:
             from ..core.llm.service import get_llm_service
@@ -2293,6 +2458,7 @@ Available commands the user can use:
 - 'pause': Pause the mission
 - 'resume': Resume the mission
 - 'pending': List pending approvals
+- 'run <command>': Execute a shell command
 - 'help': Show help message"""
 
             messages = [

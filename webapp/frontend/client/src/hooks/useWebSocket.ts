@@ -114,6 +114,8 @@ export function useWebSocket(
   const [newSessions, setNewSessions] = useState<Session[]>([]);
   const [newApprovals, setNewApprovals] = useState<ApprovalRequest[]>([]);
   const [newChatMessages, setNewChatMessages] = useState<ChatMessage[]>([]);
+  const wsPingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const WS_PING_INTERVAL_MS = 30000;
 
   // Refs
   const wsClientRef = useRef<WebSocketClient | null>(null);
@@ -215,8 +217,32 @@ export function useWebSocket(
         break;
 
       case "chat_message":
-        setNewChatMessages((prev) => [...prev, data as ChatMessage]);
-        setEvents((prev) => [eventCard, ...prev].slice(0, MAX_EVENTS_DISPLAY));
+        // DEDUPLICATION LOGIC:
+        // If we have a streaming message that just finished, ignore "chat_message" events 
+        // that are likely the final "complete" packet for the same content.
+        {
+            const msgData = data as ChatMessage;
+            // If this message content is already in our chat history (checking last 3 messages), skip it.
+            // This prevents "Message from system" echoing what was just streamed.
+            setNewChatMessages(prev => {
+                const lastMsg = prev[prev.length - 1];
+                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content === msgData.content) {
+                    console.log("[WebSocket] Skipping duplicate chat_message (already streamed)");
+                    return prev;
+                }
+                // Also check if we are currently streaming a message with similar ID or content
+                if (currentStreamingMessageId) {
+                     console.log("[WebSocket] Skipping chat_message while streaming is active");
+                     return prev;
+                }
+                
+                return [...prev, msgData];
+            });
+            
+            // Only add to events if it's NOT a duplicate system echo
+            // We'll skip adding simple chat messages to the "Events" list to reduce clutter
+            // setEvents((prev) => [eventCard, ...prev].slice(0, MAX_EVENTS_DISPLAY));
+        }
         break;
 
       case "ai_response_start":
@@ -312,6 +338,57 @@ export function useWebSocket(
         }
         break;
 
+      // Terminal Streaming Events - Real-time command execution feedback
+      case "terminal_command_start":
+        // Command execution started - show the command prompt
+        {
+          const startData = data as { command?: string; command_id?: string };
+          if (startData.command) {
+            setTerminalOutput((prev) => [...prev, `$ ${startData.command}`]);
+          }
+          console.log("[Terminal] Command started:", startData.command);
+        }
+        break;
+
+      case "terminal_output_line":
+        // Single line of output - enables real-time streaming
+        {
+          const lineData = data as { line?: string; command_id?: string; simulation?: boolean };
+          if (lineData.line) {
+            const prefix = lineData.simulation ? "[SIM] " : "";
+            setTerminalOutput((prev) => [...prev, `${prefix}${lineData.line}`]);
+          }
+        }
+        break;
+
+      case "terminal_command_complete":
+        // Command finished execution
+        {
+          const completeData = data as { command?: string; exit_code?: number; command_id?: string; duration_ms?: number };
+          const exitCodeMsg = completeData.exit_code !== undefined 
+            ? `[Exit code: ${completeData.exit_code}]`
+            : "";
+          const durationMsg = completeData.duration_ms !== undefined
+            ? ` (${completeData.duration_ms}ms)`
+            : "";
+          if (exitCodeMsg || durationMsg) {
+            setTerminalOutput((prev) => [...prev, `${exitCodeMsg}${durationMsg}`]);
+          }
+          console.log("[Terminal] Command completed:", completeData);
+        }
+        break;
+
+      case "terminal_command_error":
+        // Command execution error
+        {
+          const errorData = data as { command?: string; error?: string; command_id?: string };
+          if (errorData.error) {
+            setTerminalOutput((prev) => [...prev, `Error: ${errorData.error}`]);
+          }
+          console.error("[Terminal] Command error:", errorData);
+        }
+        break;
+
       default:
         // Generic event handling
         setEvents((prev) => [eventCard, ...prev].slice(0, MAX_EVENTS_DISPLAY));
@@ -363,9 +440,22 @@ export function useWebSocket(
 
     setStatus("connecting");
     wsClientRef.current.connect();
+    
+    // Start heartbeat
+    if (wsPingIntervalRef.current) clearInterval(wsPingIntervalRef.current);
+    wsPingIntervalRef.current = setInterval(() => {
+        if (wsClientRef.current?.isConnected) {
+            wsClientRef.current.send({ type: 'ping', timestamp: new Date().toISOString() });
+        }
+    }, WS_PING_INTERVAL_MS);
+
   }, [missionId, autoReconnect, maxReconnectAttempts, reconnectDelay, handleMessage, onConnect, onDisconnect, onError]);
 
   const disconnect = useCallback(() => {
+    if (wsPingIntervalRef.current) {
+        clearInterval(wsPingIntervalRef.current);
+        wsPingIntervalRef.current = null;
+    }
     if (wsClientRef.current) {
       wsClientRef.current.disconnect();
       wsClientRef.current = null;

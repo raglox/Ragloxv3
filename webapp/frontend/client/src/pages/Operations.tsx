@@ -5,7 +5,10 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useLocation } from "wouter";
-import { DualPanelLayout } from "@/components/manus";
+// Fix: Import directly to avoid circular dependency in barrel file
+import { DualPanelLayout } from "@/components/manus/DualPanelLayout";
+import { CapabilityLevelDisplay } from "@/components/manus/CapabilityIndicator";
+import type { VMStatus } from "@/types";
 import { useMissionStore } from "@/stores/missionStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { hitlApi, chatApi, missionApi, terminalApi, ApiError } from "@/lib/api";
@@ -107,6 +110,10 @@ export default function Operations() {
   // Command history for playback
   const [commandHistory, setCommandHistory] = useState<CommandHistoryEntry[]>([]);
 
+  // Capability level state for clear UX
+  const [capabilityLevel, setCapabilityLevel] = useState<0 | 1 | 2 | 3>(1);
+  const [vmStatus, setVMStatus] = useState<VMStatus | undefined>();
+  
   // Load mission data on mount
   useEffect(() => {
     if (missionId) {
@@ -262,6 +269,37 @@ export default function Operations() {
     }
   }, [missionId, startMission]);
 
+  // Calculate capability level based on system state
+  useEffect(() => {
+    const calculateLevel = () => {
+      // Level 0: Offline
+      if (!isConnected && !isPolling) {
+        setCapabilityLevel(0);
+        return;
+      }
+      
+      // Auto-start mission logic implies we are always at least Level 2 or 3
+      // If we have a mission, we assume the environment is initializing or ready.
+      // We hide the explicit "Created" state to mimic "Always On" agents.
+      
+      if (vmStatus?.status === "ready") {
+         setCapabilityLevel(3);
+      } else {
+         setCapabilityLevel(2); // Sandbox/Provisioning
+      }
+    };
+    
+    calculateLevel();
+  }, [isConnected, isPolling, mission, vmStatus]);
+
+  // Auto-start mission if in "created" state (Enterprise Experience)
+  useEffect(() => {
+      if (mission?.status === "created" && !isControlLoading) {
+          console.log("[Operations] Auto-starting mission environment...");
+          handleStartMission();
+      }
+  }, [mission?.status, handleStartMission, isControlLoading]);
+
   const handlePauseMission = useCallback(async () => {
     const success = await pauseMission(missionId);
     if (success) {
@@ -300,6 +338,9 @@ export default function Operations() {
   // - HTTP POST: Send message & get immediate response (fallback)
   // - WebSocket: Receive real-time AI responses (primary)
   // Enhanced with Optimistic Updates (Manus/Lovable-style)
+  // FIX: Track processed response IDs to prevent duplicates
+  const processedResponseIds = useRef<Set<string>>(new Set());
+  
   const handleSendMessage = useCallback(async (content: string) => {
     // Generate temporary ID for optimistic update
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -338,33 +379,53 @@ export default function Operations() {
       // Handle response based on role:
       // - "system": AI response received via HTTP (fallback when WebSocket unavailable)
       // - "user": Just acknowledgment, WebSocket will deliver AI response
-      if (response.role === "system") {
-        // Check if this message already exists (from WebSocket)
-        setChatMessages((prev) => {
-          const exists = prev.some(m => m.id === response.id);
-          if (exists) {
-            // WebSocket already delivered this message
-            return prev;
+      // FIX: Only add HTTP response when WebSocket is NOT connected (prevents duplicates)
+      // When WebSocket is connected, the AI response comes through the WebSocket channel
+      if (response.role === "system" && !isConnected) {
+        // Deduplicate: Check if we've already processed this response ID
+        if (response.id && processedResponseIds.current.has(response.id)) {
+          console.log("[Chat] Skipping duplicate response (already processed):", response.id);
+        } else {
+          // Track this response ID
+          if (response.id) {
+            processedResponseIds.current.add(response.id);
+            // Prevent memory growth - keep only last 100 IDs
+            if (processedResponseIds.current.size > 200) {
+              const entries = Array.from(processedResponseIds.current);
+              processedResponseIds.current = new Set(entries.slice(-100));
+            }
           }
-          // Add AI response (HTTP fallback)
-          return [...prev, response];
-        });
+          
+          // Check if this message already exists in state (from WebSocket)
+          setChatMessages((prev) => {
+            const exists = prev.some(m => m.id === response.id);
+            if (exists) {
+              console.log("[Chat] Message already in state, skipping:", response.id);
+              return prev;
+            }
+            console.log("[Chat] Adding HTTP response (WebSocket disconnected):", response.id);
+            return [...prev, response];
+          });
 
-        // Add to events for activity feed (only if not duplicate)
-        addEvent({
-          id: `event-${Date.now()}`,
-          type: "chat_message",
-          title: response.command ? `Command: ${response.command}` : "Message from assistant",
-          description: response.content,
-          timestamp: response.timestamp,
-          status: "completed",
-          data: response,
-          command: response.command,  // Pass command for terminal integration
-          output: response.output?.join("\n"),  // Pass output for terminal
-          expanded: false,
-        });
+          // Add to events for activity feed
+          addEvent({
+            id: `event-${Date.now()}`,
+            type: "chat_message",
+            title: response.command ? `Command: ${response.command}` : "Message from assistant",
+            description: response.content,
+            timestamp: response.timestamp,
+            status: "completed",
+            data: response,
+            command: response.command,  // Pass command for terminal integration
+            output: Array.isArray(response.output) ? response.output.join("\n") : response.output,  // Pass output for terminal
+            expanded: false,
+          });
+        }
+      } else if (response.role === "system" && isConnected) {
+        // WebSocket is connected - response will come through WebSocket, skip HTTP response
+        console.log("[Chat] WebSocket connected, HTTP response will be ignored:", response.id);
       }
-      // If response.role === "user", just acknowledge - WebSocket handles AI response
+      // If response.role === "user", it's just acknowledgment - WebSocket handles AI response
     } catch (error) {
       console.error("[Operations] Failed to send message:", error);
 
@@ -413,7 +474,7 @@ export default function Operations() {
         description: errorDescription,
       });
     }
-  }, [missionId, addEvent]);
+  }, [missionId, addEvent, isConnected]);
 
   // Handle command click (show in terminal)
   const handleCommandClick = useCallback((command: string) => {
@@ -635,31 +696,12 @@ export default function Operations() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Connection Status */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs ${isConnected
-                  ? "bg-green-500/10 text-green-500"
-                  : isPolling
-                    ? "bg-yellow-500/10 text-yellow-500"
-                    : "bg-red-500/10 text-red-500"
-                }`}>
-                {isConnected ? (
-                  <Wifi className="w-3 h-3" />
-                ) : (
-                  <WifiOff className="w-3 h-3" />
-                )}
-                <span>{isConnected ? "Live" : isPolling ? "Polling" : "Offline"}</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isConnected
-                ? "Connected via WebSocket (real-time)"
-                : isPolling
-                  ? `Polling every ${POLLING_INTERVAL / 1000}s`
-                  : "Disconnected from server"}
-            </TooltipContent>
-          </Tooltip>
+          {/* Capability Level Indicator - Shows execution mode clearly */}
+          <CapabilityLevelDisplay
+            isConnected={isConnected}
+            missionStatus={mission?.status}
+            vmStatus={vmStatus}
+          />
 
           {/* Refresh Button */}
           <Tooltip>
@@ -676,75 +718,20 @@ export default function Operations() {
             <TooltipContent>Refresh data</TooltipContent>
           </Tooltip>
 
-          {/* Mission Controls */}
+          {/* Mission Controls - HIDDEN FOR ENTERPRISE EXPERIENCE (Auto-managed) */}
+          {/* 
           <div className="flex items-center gap-1 ml-2 pl-2 border-l border-border">
-            {/* Start Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleStartMission}
-                  disabled={!canStart || isControlLoading}
-                  className="text-green-500 hover:text-green-600 hover:bg-green-500/10"
-                >
-                  {isControlLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Start Mission</TooltipContent>
-            </Tooltip>
-
-            {/* Pause Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handlePauseMission}
-                  disabled={!canPause || isControlLoading}
-                  className="text-yellow-500 hover:text-yellow-600 hover:bg-yellow-500/10"
-                >
-                  <Pause className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Pause Mission</TooltipContent>
-            </Tooltip>
-
-            {/* Resume Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleResumeMission}
-                  disabled={!canResume || isControlLoading}
-                  className="text-blue-500 hover:text-blue-600 hover:bg-blue-500/10"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Resume Mission</TooltipContent>
-            </Tooltip>
-
-            {/* Stop Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleStopMission}
-                  disabled={!canStop || isControlLoading}
-                  className="text-red-500 hover:text-red-600 hover:bg-red-500/10"
-                >
-                  <Square className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Stop Mission</TooltipContent>
-            </Tooltip>
+             ... (Start/Pause buttons removed for cleaner UX) ...
+          </div> 
+          */}
+          <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border">
+             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span className="text-xs font-medium text-green-500">Environment Active</span>
+             </div>
           </div>
         </div>
       </header>
