@@ -212,19 +212,19 @@ export function CapabilityIndicator({
         </motion.div>
       )}
 
-      {/* Simulation warning */}
+      {/* Sandbox warning */}
       {level === 2 && !vmStatus && (
         <Tooltip>
           <TooltipTrigger asChild>
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/20">
               <AlertCircle className="w-3 h-3 text-yellow-500" />
-              <span className="text-xs text-yellow-500">Simulation Mode</span>
+              <span className="text-xs text-yellow-500">Sandbox Mode</span>
             </div>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="max-w-xs">
-            <p>Commands are running in simulation mode.</p>
+            <p>Commands are running in sandbox mode.</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Output is representative but not from live systems.
+              Output is representative but not from live external targets.
             </p>
           </TooltipContent>
         </Tooltip>
