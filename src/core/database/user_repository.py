@@ -580,3 +580,67 @@ class UserRepository(BaseRepository[User]):
         """
         rows = await self.pool.fetch(query, limit, offset)
         return [self._record_to_entity(row) for row in rows]
+    
+    # ===================================================================
+    # VM Provisioning Operations (On-Demand)
+    # ===================================================================
+    
+    async def update_vm_status(
+        self,
+        user_id: UUID,
+        vm_status: str,
+        vm_info: Optional[Dict[str, Any]] = None
+    ) -> Optional[User]:
+        """
+        Update VM provisioning status and info in user metadata.
+        
+        This is used for on-demand VM provisioning when a user starts their first mission.
+        
+        Args:
+            user_id: User UUID
+            vm_status: VM status (not_created, creating, ready, failed, stopped)
+            vm_info: VM information (vm_id, ip_address, etc.) - optional
+            
+        Returns:
+            Updated user or None if not found
+        """
+        import json
+        
+        async with self.pool.acquire() as conn:
+            # Get current user
+            user = await self.get_by_id(user_id)
+            if not user:
+                logger.warning(f"User {user_id} not found for VM status update")
+                return None
+            
+            # Update metadata
+            metadata = user.metadata or {}
+            metadata["vm_status"] = vm_status
+            
+            if vm_info:
+                metadata["vm_info"] = vm_info
+                # Also update top-level fields for quick access
+                metadata["vm_id"] = vm_info.get("vm_id")
+                metadata["vm_ip"] = vm_info.get("ip_address")
+                metadata["vm_ssh_user"] = vm_info.get("ssh_user")
+                metadata["vm_ssh_password"] = vm_info.get("ssh_password")
+                metadata["vm_ssh_port"] = vm_info.get("ssh_port", 22)
+            
+            # Update in database
+            query = """
+                UPDATE users
+                SET metadata = $1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $2
+                RETURNING *
+            """
+            
+            row = await conn.fetchrow(query, json.dumps(metadata), user_id)
+            updated_user = self._record_to_entity(row)
+            
+            if updated_user:
+                logger.info(
+                    f"Updated VM status for user {user_id}: {vm_status}" +
+                    (f" (IP: {vm_info.get('ip_address')})" if vm_info else "")
+                )
+            
+            return updated_user

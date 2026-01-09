@@ -14,6 +14,8 @@ from enum import Enum
 from dataclasses import dataclass, field
 
 from .oneprovider_client import OneProviderClient, VMState
+from .firecracker_client import FirecrackerClient
+from typing import Union
 
 
 logger = logging.getLogger("raglox.infrastructure.cloud_provider.vm_manager")
@@ -124,7 +126,7 @@ class VMInstance:
 
 class VMManager:
     """
-    VM Manager for OneProvider
+    VM Manager for Cloud Providers (OneProvider or Firecracker)
     
     Provides high-level VM lifecycle management:
     - VM creation with configuration
@@ -132,29 +134,43 @@ class VMManager:
     - Status monitoring
     - Resource tracking
     - Agent installation
+    
+    Supports multiple backends:
+    - OneProvider (cloud VMs)
+    - Firecracker (on-premise microVMs)
     """
     
     def __init__(
         self,
-        client: OneProviderClient,
-        default_project_uuid: str
+        client: Union[OneProviderClient, FirecrackerClient],
+        default_project_uuid: Optional[str] = None
     ):
         """
         Initialize VM Manager
         
         Args:
-            client: OneProvider client
-            default_project_uuid: Default project for VMs
+            client: Cloud provider client (OneProvider or Firecracker)
+            default_project_uuid: Default project for VMs (OneProvider only)
         """
         self.client = client
-        self.default_project_uuid = default_project_uuid
+        self.default_project_uuid = default_project_uuid or ""
         self._vm_cache: Dict[str, VMInstance] = {}
         self._lock = asyncio.Lock()
+        
+        # Detect client type
+        self.is_firecracker = isinstance(client, FirecrackerClient)
+        self.is_oneprovider = isinstance(client, OneProviderClient)
+        
+        logger.info(
+            f"Initialized VMManager with "
+            f"{'Firecracker' if self.is_firecracker else 'OneProvider'} backend"
+        )
     
     async def create_vm(
         self,
         config: VMConfiguration,
         project_uuid: Optional[str] = None,
+        user_id: Optional[str] = None,
         wait_for_ready: bool = True,
         ready_timeout: int = 600
     ) -> VMInstance:
@@ -163,7 +179,8 @@ class VMManager:
         
         Args:
             config: VM configuration
-            project_uuid: Project UUID (uses default if not provided)
+            project_uuid: Project UUID (OneProvider only, ignored for Firecracker)
+            user_id: User ID (Firecracker only, for isolation)
             wait_for_ready: Wait for VM to be ready
             ready_timeout: Maximum wait time for VM to be ready
         
@@ -171,25 +188,38 @@ class VMManager:
             Created VM instance
         
         Raises:
-            OneProviderError: If creation fails
+            ValueError: If creation fails
         """
-        project_uuid = project_uuid or self.default_project_uuid
-        
         logger.info(f"Creating VM: {config.hostname}")
         
-        # Create VM via API
-        result = await self.client.create_vm(
-            project_uuid=project_uuid,
-            hostname=config.hostname,
-            plan_id=config.plan_id,
-            os_id=config.os_id,
-            location_id=config.location_id,
-            ssh_keys=config.ssh_keys,
-            password=config.password,
-            ipv6=config.ipv6,
-            private_network=config.private_network,
-            auto_backups=config.auto_backups
-        )
+        # Prepare parameters based on backend
+        if self.is_firecracker:
+            # Firecracker creation
+            if not user_id:
+                raise ValueError("user_id is required for Firecracker VMs")
+            
+            result = await self.client.create_vm(
+                user_id=user_id,
+                hostname=config.hostname,
+                vcpu_count=2,  # Default for Firecracker
+                mem_size_mib=2048  # Default for Firecracker
+            )
+        else:
+            # OneProvider creation
+            project_uuid = project_uuid or self.default_project_uuid
+            
+            result = await self.client.create_vm(
+                project_uuid=project_uuid,
+                hostname=config.hostname,
+                plan_id=config.plan_id,
+                os_id=config.os_id,
+                location_id=config.location_id,
+                ssh_keys=config.ssh_keys,
+                password=config.password,
+                ipv6=config.ipv6,
+                private_network=config.private_network,
+                auto_backups=config.auto_backups
+            )
         
         vm_id = result.get("vm_id")
         
@@ -200,7 +230,7 @@ class VMManager:
         vm_info = await self.client.get_vm_info(vm_id)
         
         # Create VM instance
-        vm = self._parse_vm_info(vm_info, config.tags)
+        vm = self._parse_vm_info(vm_info, config.tags, user_id=user_id)
         
         # Cache VM
         async with self._lock:
@@ -213,7 +243,7 @@ class VMManager:
             logger.info(f"Waiting for VM {vm_id} to be ready...")
             ready = await self.client.wait_for_vm_ready(
                 vm_id,
-                timeout=ready_timeout
+                timeout=ready_timeout if not self.is_firecracker else 30  # Firecracker is faster
             )
             
             if not ready:
@@ -299,26 +329,33 @@ class VMManager:
     async def list_vms(
         self,
         project_uuid: Optional[str] = None,
+        user_id: Optional[str] = None,
         refresh: bool = False
     ) -> List[VMInstance]:
         """
-        List all VMs in project
+        List all VMs in project (OneProvider) or for user (Firecracker)
         
         Args:
-            project_uuid: Project UUID
+            project_uuid: Project UUID (OneProvider only)
+            user_id: User ID (Firecracker only)
             refresh: Force refresh from API
         
         Returns:
             List of VM instances
         """
-        project_uuid = project_uuid or self.default_project_uuid
-        
         try:
-            vms_data = await self.client.list_vms(project_uuid)
+            if self.is_firecracker:
+                # List Firecracker VMs
+                vms_data = await self.client.list_vms(user_id=user_id)
+            else:
+                # List OneProvider VMs
+                project_uuid = project_uuid or self.default_project_uuid
+                vms_data = await self.client.list_vms(project_uuid)
+            
             vms = []
             
             for vm_data in vms_data:
-                vm = self._parse_vm_info(vm_data)
+                vm = self._parse_vm_info(vm_data, user_id=user_id)
                 vms.append(vm)
                 
                 # Update cache
@@ -372,94 +409,136 @@ class VMManager:
     def _parse_vm_info(
         self,
         vm_data: Dict[str, Any],
-        tags: Optional[Dict[str, str]] = None
+        tags: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None
     ) -> VMInstance:
         """
         Parse VM data from API response
         
         Args:
-            vm_data: VM data from API (OneProvider format)
+            vm_data: VM data from API (OneProvider or Firecracker format)
             tags: Additional tags
+            user_id: User ID (for Firecracker)
         
         Returns:
             VMInstance
         
         Note:
-            OneProvider API returns different field names:
-            - id (not vm_id)
-            - domain (not hostname)
-            - domainstatus (not state)
-            - dedicatedip (not ipv4)
+            Supports both formats:
+            - OneProvider: {id, domain, domainstatus, dedicatedip, ...}
+            - Firecracker: {vm_id, ip_address, status, user_id, ...}
         """
-        # Extract data from OneProvider response format
-        # OneProvider returns nested: {"result": "success", "response": {...}}
-        if "response" in vm_data:
-            vm_data = vm_data["response"]
+        # Detect format
+        is_firecracker_format = "vm_id" in vm_data and "user_id" in vm_data
         
-        # Determine status from domainstatus
-        status_str = vm_data.get("domainstatus", "").lower()
-        is_installing = vm_data.get("is_installing", False)
-        
-        if is_installing or status_str == "pending":
-            status = VMStatus.CREATING
-        elif status_str in ["active", "running"]:
-            status = VMStatus.READY
-        elif status_str in ["stopped", "suspended"]:
-            status = VMStatus.STOPPED
-        elif status_str in ["terminated", "cancelled"]:
-            status = VMStatus.DESTROYED
+        if is_firecracker_format:
+            # Parse Firecracker format
+            vm_id = vm_data.get("vm_id", "")
+            hostname = vm_data.get("hostname", vm_id)
+            status_str = vm_data.get("status", "").lower()
+            ip_address = vm_data.get("ip_address")
+            
+            # Map Firecracker status to VMStatus
+            if status_str == "running":
+                status = VMStatus.READY
+            elif status_str == "stopped":
+                status = VMStatus.STOPPED
+            elif status_str == "creating":
+                status = VMStatus.CREATING
+            else:
+                status = VMStatus.ERROR
+            
+            # Create instance
+            return VMInstance(
+                vm_id=vm_id,
+                hostname=hostname,
+                status=status,
+                project_uuid="",  # Firecracker doesn't use projects
+                plan_id="firecracker-micro",
+                os_id="ubuntu-22.04-firecracker",
+                location_id="local",
+                ipv4=ip_address,
+                ipv6=None,
+                private_ip=None,
+                cpu_cores=vm_data.get("vcpu_count", 2),
+                memory_mb=vm_data.get("mem_size_mib", 2048),
+                disk_gb=vm_data.get("disk_size_mb", 10240) // 1024,
+                bandwidth_used_gb=0.0,
+                bandwidth_limit_gb=None,
+                is_installing=False,  # Firecracker VMs are instantly ready
+                installation_progress=100,
+                installation_message="Ready",
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                tags=tags or {}
+            )
         else:
-            # Unknown status, mark as error
-            status = VMStatus.ERROR
-        
-        # Parse timestamps
-        created_at = None
-        if "created_at" in vm_data:
-            try:
-                created_at = datetime.fromisoformat(
-                    vm_data["created_at"].replace("Z", "+00:00")
-                )
-            except Exception:
-                pass
-        
-        # Parse bandwidth
-        bandwidth_data = vm_data.get("bandwidth", {})
-        bandwidth_used = float(vm_data.get("bandwidth", 0)) if isinstance(vm_data.get("bandwidth"), (int, float, str)) else 0.0
-        bandwidth_limit = None
-        
-        # Extract IP address (could be dedicatedip or ip_address)
-        ipv4 = vm_data.get("dedicatedip") or vm_data.get("ip_address")
-        ipv6 = vm_data.get("ipv6")
-        
-        # Extract specs
-        cores = int(vm_data.get("cores", 0)) if vm_data.get("cores") else 0
-        memory = int(vm_data.get("memory", 0)) if vm_data.get("memory") else 0
-        storage = int(vm_data.get("storage", 0)) if vm_data.get("storage") else 0
-        
-        # Create instance
-        return VMInstance(
-            vm_id=vm_data.get("id", ""),  # OneProvider uses "id"
-            hostname=vm_data.get("domain", ""),  # OneProvider uses "domain"
-            status=status,
-            project_uuid=vm_data.get("project_uuid", ""),
-            plan_id=vm_data.get("plan_id", ""),
-            os_id=vm_data.get("operatingSystem", ""),  # OneProvider format
-            location_id=vm_data.get("locationId", ""),  # OneProvider uses "locationId"
-            ipv4=ipv4,
-            ipv6=ipv6,
-            private_ip=vm_data.get("private_ip"),
-            cpu_cores=cores,
-            memory_mb=memory,
-            disk_gb=storage,
-            bandwidth_used_gb=bandwidth_used,
-            bandwidth_limit_gb=bandwidth_limit,
-            is_installing=is_installing,
-            installation_progress=vm_data.get("progress", 0),
-            installation_message=vm_data.get("message", ""),
-            created_at=created_at,
-            updated_at=datetime.utcnow(),
-            tags=tags or {}
-        )
+            # Parse OneProvider format
+            # Extract data from OneProvider response format
+            if "response" in vm_data:
+                vm_data = vm_data["response"]
+            
+            # Determine status from domainstatus
+            status_str = vm_data.get("domainstatus", "").lower()
+            is_installing = vm_data.get("is_installing", False)
+            
+            if is_installing or status_str == "pending":
+                status = VMStatus.CREATING
+            elif status_str in ["active", "running"]:
+                status = VMStatus.READY
+            elif status_str in ["stopped", "suspended"]:
+                status = VMStatus.STOPPED
+            elif status_str in ["terminated", "cancelled"]:
+                status = VMStatus.DESTROYED
+            else:
+                status = VMStatus.ERROR
+            
+            # Parse timestamps
+            created_at = None
+            if "created_at" in vm_data:
+                try:
+                    created_at = datetime.fromisoformat(
+                        vm_data["created_at"].replace("Z", "+00:00")
+                    )
+                except Exception:
+                    pass
+            
+            # Parse bandwidth
+            bandwidth_used = float(vm_data.get("bandwidth", 0)) if isinstance(vm_data.get("bandwidth"), (int, float, str)) else 0.0
+            
+            # Extract IP address
+            ipv4 = vm_data.get("dedicatedip") or vm_data.get("ip_address")
+            ipv6 = vm_data.get("ipv6")
+            
+            # Extract specs
+            cores = int(vm_data.get("cores", 0)) if vm_data.get("cores") else 0
+            memory = int(vm_data.get("memory", 0)) if vm_data.get("memory") else 0
+            storage = int(vm_data.get("storage", 0)) if vm_data.get("storage") else 0
+            
+            # Create instance
+            return VMInstance(
+                vm_id=vm_data.get("id", ""),
+                hostname=vm_data.get("domain", ""),
+                status=status,
+                project_uuid=vm_data.get("project_uuid", self.default_project_uuid),
+                plan_id=vm_data.get("plan_id", ""),
+                os_id=vm_data.get("operatingSystem", ""),
+                location_id=vm_data.get("locationId", ""),
+                ipv4=ipv4,
+                ipv6=ipv6,
+                private_ip=vm_data.get("private_ip"),
+                cpu_cores=cores,
+                memory_mb=memory,
+                disk_gb=storage,
+                bandwidth_used_gb=bandwidth_used,
+                bandwidth_limit_gb=None,
+                is_installing=is_installing,
+                installation_progress=vm_data.get("progress", 0),
+                installation_message=vm_data.get("message", ""),
+                created_at=created_at,
+                updated_at=datetime.utcnow(),
+                tags=tags or {}
+            )
     
     async def _install_agent(
         self,

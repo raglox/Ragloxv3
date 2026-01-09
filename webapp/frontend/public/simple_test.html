@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Connection Test</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 20px; font-size: 24px; }
+        button { 
+            width: 100%; 
+            padding: 15px; 
+            margin: 10px 0;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            font-weight: 600;
+        }
+        button:active { background: #0056b3; }
+        .result { 
+            margin: 15px 0; 
+            padding: 15px; 
+            border-radius: 8px;
+            font-size: 14px;
+            word-break: break-all;
+        }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 RAGLOX Connection Test</h1>
+        <div class="info result">
+            <strong>Testing from:</strong> <span id="clientInfo">Loading...</span>
+        </div>
+        <button onclick="testBackend()">Test Backend (Port 8000)</button>
+        <button onclick="testHealth()">Test Health Endpoint</button>
+        <button onclick="testRegister()">Test Registration API</button>
+        <div id="results"></div>
+    </div>
+    
+    <script>
+        // Display client info
+        document.getElementById('clientInfo').textContent = 
+            `${window.location.hostname} (${navigator.userAgent.includes('Mobile') ? 'Mobile' : 'Desktop'})`;
+        
+        const API_BASE = 'http://208.115.230.194:8000';
+        
+        function addResult(message, isSuccess) {
+            const div = document.createElement('div');
+            div.className = `result ${isSuccess ? 'success' : 'error'}`;
+            div.innerHTML = `<strong>${new Date().toLocaleTimeString()}</strong><br>${message}`;
+            document.getElementById('results').insertBefore(div, document.getElementById('results').firstChild);
+        }
+        
+        async function testBackend() {
+            addResult('Testing backend connection...', true);
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/health`, {
+                    method: 'GET',
+                    mode: 'cors'
+                });
+                const data = await response.json();
+                addResult(`✅ Backend Connected!<br>Status: ${data.status}<br>Service: ${data.service}`, true);
+            } catch (error) {
+                addResult(`❌ Backend Error: ${error.message}<br>Possible causes:<br>- Firewall blocking port 8000<br>- CORS not configured<br>- Backend not running`, false);
+            }
+        }
+        
+        async function testHealth() {
+            addResult('Testing /health endpoint...', true);
+            try {
+                const response = await fetch(`${API_BASE}/health`, {
+                    method: 'GET',
+                    mode: 'cors'
+                });
+                const data = await response.json();
+                addResult(`✅ Health Check OK!<br>Response: ${JSON.stringify(data).substring(0, 100)}...`, true);
+            } catch (error) {
+                addResult(`❌ Health Check Failed: ${error.message}`, false);
+            }
+        }
+        
+        async function testRegister() {
+            addResult('Testing registration API...', true);
+            const testEmail = `test${Date.now()}@example.com`;
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/auth/register`, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: testEmail,
+                        password: 'testpass123',
+                        fullname: 'Test User',
+                        organization_name: 'Test Org'
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    addResult(`⚠️ Registration Response (${response.status}): ${JSON.stringify(error).substring(0, 150)}`, false);
+                    return;
+                }
+                
+                const data = await response.json();
+                addResult(`✅ Registration API Works!<br>User created: ${testEmail}<br>Token received: Yes`, true);
+            } catch (error) {
+                addResult(`❌ Registration Failed: ${error.message}`, false);
+            }
+        }
+        
+        // Auto-test on load
+        setTimeout(() => {
+            addResult('🚀 Auto-testing backend connection...', true);
+            testBackend();
+        }, 1000);
+    </script>
+</body>
+</html>

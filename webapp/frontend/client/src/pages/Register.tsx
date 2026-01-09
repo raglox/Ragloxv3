@@ -10,68 +10,22 @@ import {
   Mail,
   Lock,
   Building,
-  Server,
-  Globe,
-  Cpu,
-  HardDrive,
   Loader2,
   CheckCircle,
-  ArrowLeft,
-  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { authApi } from "@/lib/api";
 import { useAuth } from "@/stores/authStore";
-import { toast } from "sonner";
-
-// VM Location Options
-const VM_LOCATIONS = [
-  { id: "us-east", name: "US East (Virginia)", flag: "🇺🇸" },
-  { id: "us-west", name: "US West (California)", flag: "🇺🇸" },
-  { id: "eu-west", name: "EU West (Ireland)", flag: "🇪🇺" },
-  { id: "eu-central", name: "EU Central (Frankfurt)", flag: "🇩🇪" },
-  { id: "ap-southeast", name: "Asia Pacific (Singapore)", flag: "🇸🇬" },
-  { id: "ap-northeast", name: "Asia Pacific (Tokyo)", flag: "🇯🇵" },
-  { id: "me-south", name: "Middle East (Dubai)", flag: "🇦🇪" },
-  { id: "sa-east", name: "South America (São Paulo)", flag: "🇧🇷" },
-];
-
-// VM Plan Options (fixed at 8GB-2CORE as per requirements)
-const VM_PLANS = [
-  {
-    id: "8GB-2CORE",
-    name: "Standard Security VM",
-    ram: "8 GB RAM",
-    cpu: "2 vCPU Cores",
-    storage: "100 GB SSD",
-    network: "1 Gbps",
-    isDefault: true,
-  },
-];
-
-// OS Options
-const OS_OPTIONS = [
-  { id: "ubuntu-22.04", name: "Ubuntu 22.04 LTS", description: "Recommended" },
-  { id: "ubuntu-20.04", name: "Ubuntu 20.04 LTS", description: "Stable" },
-  { id: "debian-12", name: "Debian 12", description: "Minimal" },
-  { id: "kali-2024", name: "Kali Linux 2024", description: "Security-focused" },
-];
+import { enhancedToast } from "@/components/ui/enhanced-toast";
+import { ConnectionStatusBanner } from "@/components/ui/connection-status-banner";
 
 export default function Register() {
   const [, setLocation] = useLocation();
   const { setToken, setUser, isAuthenticated, checkAuth } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
-  const [step, setStep] = useState<"account" | "vm">("account");
   const [isChecking, setIsChecking] = useState(true);
 
   // Account form state - ALL HOOKS MUST BE AT THE TOP
@@ -83,12 +37,11 @@ export default function Register() {
     organization: "",
   });
 
-  // VM configuration state
-  const [vmConfig, setVmConfig] = useState({
-    location: "us-east",
-    plan: "8GB-2CORE",
-    os: "ubuntu-22.04",
-  });
+  // VM configuration removed - will be provisioned on-demand
+  
+  // Connection state for banner
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Form validation
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -155,12 +108,28 @@ export default function Register() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleAccountSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (validateAccountForm()) {
-      setStep("vm");
+  const handleRetryConnection = async () => {
+    setIsRetrying(true);
+    setBackendError(null);
+    
+    try {
+      // Test backend connection
+      const response = await fetch('http://208.115.230.194:8000/api/v1/health');
+      if (response.ok) {
+        enhancedToast.success("Connected to backend", {
+          description: "You can now proceed with registration"
+        });
+      } else {
+        setBackendError("Backend is reachable but not responding correctly");
+      }
+    } catch (error) {
+      setBackendError("Unable to connect to backend server");
+    } finally {
+      setIsRetrying(false);
     }
   };
+
+  // handleAccountSubmit removed - single step registration now
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,24 +140,34 @@ export default function Register() {
         email: formData.email,
         password: formData.password,
         full_name: formData.fullName,
-        organization: formData.organization || undefined,
-        vm_config: {
-          plan_id: vmConfig.plan,
-          location_id: vmConfig.location,
-          os_id: vmConfig.os,
-        },
+        organization_name: formData.organization || undefined,
       });
 
       if (response.access_token) {
         setToken(response.access_token);
         setUser(response.user);
-        toast.success("Account created successfully! Your VM is being provisioned.");
+        enhancedToast.success("Account created successfully!", {
+          description: "Welcome to RAGLOX. Redirecting to dashboard..."
+        });
         setLocation("/dashboard");
       }
     } catch (error: any) {
       console.error("Registration error:", error);
       const message = error.message || "Registration failed. Please try again.";
-      toast.error(message);
+      
+      // Check if it's a network error
+      if (error.status === 0 || !error.status) {
+        setBackendError("Unable to connect to backend server. Please check if the server is running.");
+        enhancedToast.connectionError(
+          "Unable to connect to server",
+          () => handleRegister(e)
+        );
+      } else {
+        enhancedToast.error("Registration Failed", {
+          description: message,
+          duration: 6000,
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -196,6 +175,14 @@ export default function Register() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {/* Connection Status Banner */}
+      <ConnectionStatusBanner
+        isConnected={!backendError}
+        isLoading={isRetrying}
+        error={backendError}
+        onRetry={handleRetryConnection}
+      />
+      
       {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="container flex items-center justify-between h-16">
@@ -220,37 +207,19 @@ export default function Register() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
           >
-            {/* Progress Indicator */}
-            <div className="flex items-center justify-center gap-4 mb-8">
-              <div className={`flex items-center gap-2 ${step === "account" ? "text-primary" : "text-muted-foreground"}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === "account" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
-                  1
-                </div>
-                <span className="font-medium">Account</span>
-              </div>
-              <div className="w-16 h-0.5 bg-border" />
-              <div className={`flex items-center gap-2 ${step === "vm" ? "text-primary" : "text-muted-foreground"}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === "vm" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
-                  2
-                </div>
-                <span className="font-medium">VM Setup</span>
-              </div>
-            </div>
+            {/* Progress Indicator removed - single step registration */}
 
             <Card>
               <CardHeader className="text-center">
                 <CardTitle className="text-2xl">
-                  {step === "account" ? "Create Your Account" : "Configure Your Security VM"}
+                  Create Your Account
                 </CardTitle>
                 <CardDescription>
-                  {step === "account"
-                    ? "Enter your details to get started with RAGLOX"
-                    : "Choose your VM specifications and location"}
+                  Enter your details to get started with RAGLOX
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {step === "account" ? (
-                  <form onSubmit={handleAccountSubmit} className="space-y-4">
+                <form onSubmit={handleRegister} className="space-y-4">
                     {/* Full Name */}
                     <div className="space-y-2">
                       <Label htmlFor="fullName">Full Name *</Label>
@@ -341,132 +310,20 @@ export default function Register() {
                       )}
                     </div>
 
-                    <Button type="submit" className="w-full" size="lg">
-                      Continue to VM Setup
-                      <ArrowLeft className="w-4 h-4 ml-2 rotate-180" />
+                    <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Creating Account...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Create Account
+                        </>
+                      )}
                     </Button>
                   </form>
-                ) : (
-                  <form onSubmit={handleRegister} className="space-y-6">
-                    {/* VM Plan Info */}
-                    <div className="p-4 bg-muted/50 rounded-lg border border-border">
-                      <div className="flex items-start gap-3">
-                        <Server className="w-5 h-5 text-primary mt-0.5" />
-                        <div>
-                          <h4 className="font-medium">Standard Security VM</h4>
-                          <div className="grid grid-cols-2 gap-2 mt-2 text-sm text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <Cpu className="w-4 h-4" />
-                              <span>2 vCPU Cores</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <HardDrive className="w-4 h-4" />
-                              <span>8 GB RAM</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <HardDrive className="w-4 h-4" />
-                              <span>100 GB SSD</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Globe className="w-4 h-4" />
-                              <span>1 Gbps Network</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Location Selection */}
-                    <div className="space-y-2">
-                      <Label>VM Location *</Label>
-                      <Select
-                        value={vmConfig.location}
-                        onValueChange={(value) => setVmConfig({ ...vmConfig, location: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select location" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {VM_LOCATIONS.map((location) => (
-                            <SelectItem key={location.id} value={location.id}>
-                              <div className="flex items-center gap-2">
-                                <span>{location.flag}</span>
-                                <span>{location.name}</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Info className="w-3 h-3" />
-                        Choose a location closest to your target infrastructure
-                      </p>
-                    </div>
-
-                    {/* OS Selection */}
-                    <div className="space-y-2">
-                      <Label>Operating System *</Label>
-                      <Select
-                        value={vmConfig.os}
-                        onValueChange={(value) => setVmConfig({ ...vmConfig, os: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select OS" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {OS_OPTIONS.map((os) => (
-                            <SelectItem key={os.id} value={os.id}>
-                              <div className="flex items-center gap-2">
-                                <span>{os.name}</span>
-                                <span className="text-xs text-muted-foreground">({os.description})</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* Pre-installed Tools Notice */}
-                    <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
-                      <div className="flex items-start gap-3">
-                        <CheckCircle className="w-5 h-5 text-primary mt-0.5" />
-                        <div>
-                          <h4 className="font-medium text-sm">Pre-installed Security Tools</h4>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Your VM will come with Nmap, Masscan, Metasploit, Nuclei, and the RAGLOX Agent pre-installed.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Buttons */}
-                    <div className="flex gap-3">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="flex-1"
-                        onClick={() => setStep("account")}
-                        disabled={isLoading}
-                      >
-                        <ArrowLeft className="w-4 h-4 mr-2" />
-                        Back
-                      </Button>
-                      <Button type="submit" className="flex-1" disabled={isLoading}>
-                        {isLoading ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Creating Account...
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle className="w-4 h-4 mr-2" />
-                            Create Account & Deploy VM
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </form>
-                )}
 
                 {/* Login Link */}
                 <div className="mt-6 text-center text-sm text-muted-foreground">

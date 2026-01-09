@@ -13,6 +13,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "@/stores/authStore";
 import { authApi } from "@/lib/api";
 import { toast } from "sonner";
+import { enhancedToast } from "@/components/ui/enhanced-toast";
+import { ConnectionStatusBanner } from "@/components/ui/connection-status-banner";
 
 export default function Login() {
   const [, setLocation] = useLocation();

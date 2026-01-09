@@ -261,13 +261,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     app.state.c2_manager = c2_manager
     
     # ═══════════════════════════════════════════════════════════════
-    # INTEGRATION: Initialize OneProvider Cloud & SSH Infrastructure
+    # INTEGRATION: Initialize Cloud Provider (Firecracker or OneProvider) & SSH Infrastructure
     # ═══════════════════════════════════════════════════════════════
     vm_manager = None
     ssh_manager = None
     environment_manager = None
     
-    if settings.oneprovider_enabled and settings.oneprovider_api_key:
+    # Initialize Cloud Provider based on settings
+    if settings.use_firecracker:
+        try:
+            from ..infrastructure.cloud_provider import FirecrackerClient, VMManager
+            logger.info("🚀 Initializing Firecracker MicroVM Integration...")
+            
+            firecracker_client = FirecrackerClient(
+                api_url=settings.firecracker_api_url,
+                timeout=30,
+                max_retries=3
+            )
+            
+            vm_manager = VMManager(
+                client=firecracker_client,
+                default_project_uuid=None  # Firecracker doesn't use projects
+            )
+            
+            logger.info(f"✅ Firecracker MicroVM Integration Initialized")
+            logger.info(f"   API URL: {settings.firecracker_api_url}")
+            logger.info(f"   Default vCPU: {settings.firecracker_default_vcpu}")
+            logger.info(f"   Default Memory: {settings.firecracker_default_mem_mib}MB")
+            logger.info(f"   Max VMs/User: {settings.firecracker_max_vms_per_user}")
+            
+        except Exception as e:
+            logger.error(f"❌ Firecracker initialization failed: {e}")
+            vm_manager = None
+    
+    elif settings.use_oneprovider:
         try:
             from ..infrastructure.cloud_provider import OneProviderClient, VMManager
             logger.info("☁️ Initializing OneProvider Cloud Integration...")
@@ -292,7 +319,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
             logger.error(f"❌ OneProvider initialization failed: {e}")
             vm_manager = None
     else:
-        logger.info("☁️ OneProvider Cloud Integration DISABLED")
+        logger.info("☁️ Cloud Provider Integration DISABLED")
+        logger.info("   Set CLOUD_PROVIDER=firecracker or CLOUD_PROVIDER=oneprovider to enable")
     
     # Initialize SSH Connection Manager
     if settings.ssh_enabled:

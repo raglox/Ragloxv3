@@ -219,6 +219,131 @@ class MissionController:
         self.logger.info(f"Mission created: {mission_id} (org: {organization_id})")
         return mission_id
     
+    # ═══════════════════════════════════════════════════════════════
+    # On-Demand VM Provisioning
+    # ═══════════════════════════════════════════════════════════════
+    
+    async def _ensure_vm_is_ready(
+        self,
+        user_id: str,
+        user_repo: Any
+    ) -> Dict[str, Any]:
+        """
+        Ensure VM is ready for mission execution (on-demand provisioning).
+        
+        This method implements lazy VM provisioning:
+        1. Check if VM already exists and is ready
+        2. If not, provision a new VM using Firecracker
+        3. Update user metadata with VM information
+        
+        Args:
+            user_id: User UUID string
+            user_repo: UserRepository instance
+            
+        Returns:
+            Dict containing VM information (vm_id, ip_address, etc.)
+            
+        Raises:
+            Exception: If VM provisioning fails
+        """
+        from uuid import UUID
+        from ..core.database.user_repository import User
+        from ..infrastructure.cloud_provider import get_cloud_provider_client
+        from ..api.auth_routes import VMProvisionStatus
+        
+        try:
+            user_uuid = UUID(user_id)
+        except ValueError:
+            raise ValueError(f"Invalid user_id: {user_id}")
+        
+        # Get user from database
+        user = await user_repo.get_by_id(user_uuid)
+        if not user or not user.metadata:
+            raise Exception(f"User {user_id} not found or has no metadata")
+        
+        vm_status = user.metadata.get("vm_status")
+        vm_info = user.metadata.get("vm_info", {})
+        
+        # Case 1: VM is already ready
+        if vm_status == VMProvisionStatus.READY.value and vm_info.get("ip_address"):
+            self.logger.info(
+                f"VM for user {user_id} is already ready at {vm_info.get('ip_address')}"
+            )
+            return vm_info
+        
+        # Case 2: VM is being created (wait or error)
+        if vm_status in [VMProvisionStatus.CREATING.value, VMProvisionStatus.CONFIGURING.value]:
+            raise Exception(
+                f"VM for user {user_id} is already being provisioned. Please wait."
+            )
+        
+        # Case 3: VM not created yet or stopped - provision new VM
+        self.logger.info(
+            f"VM for user {user_id} not found or not ready (status: {vm_status}). "
+            "Provisioning new Firecracker VM..."
+        )
+        
+        try:
+            # Update status to CREATING
+            await user_repo.update_vm_status(
+                user_uuid,
+                VMProvisionStatus.CREATING.value,
+                {"status_message": "Initiating Firecracker VM creation"}
+            )
+            
+            # Create VM using Firecracker
+            async with get_cloud_provider_client() as fc_client:
+                # Use user_id as unique VM identifier
+                vm_name = f"raglox-user-{user_id[:8]}"
+                
+                created_vm = await fc_client.create_vm(
+                    user_id=str(user_id),
+                    hostname=vm_name
+                )
+                
+                if not created_vm or not created_vm.get("ip_address"):
+                    raise Exception("VM created but no IP address was returned")
+                
+                # Prepare VM info for storage
+                vm_info = {
+                    "vm_id": created_vm.get("vm_id") or created_vm.get("vm_name"),
+                    "ip_address": created_vm["ip_address"],
+                    "ssh_user": "root",
+                    "ssh_password": created_vm.get("password", "raglox123"),
+                    "ssh_port": 22,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "provider": "firecracker"
+                }
+                
+                # Update status to READY with VM info
+                await user_repo.update_vm_status(
+                    user_uuid,
+                    VMProvisionStatus.READY.value,
+                    vm_info
+                )
+                
+                self.logger.info(
+                    f"✅ Successfully provisioned Firecracker VM for user {user_id}: "
+                    f"VM ID: {vm_info['vm_id']}, IP: {vm_info['ip_address']}"
+                )
+                
+                return vm_info
+                
+        except Exception as e:
+            self.logger.error(
+                f"Failed to provision VM for user {user_id}: {e}",
+                exc_info=True
+            )
+            # Update status to FAILED
+            await user_repo.update_vm_status(
+                user_uuid,
+                VMProvisionStatus.FAILED.value,
+                {"error_message": str(e)}
+            )
+            raise Exception(
+                f"Failed to provision execution environment: {e}"
+            ) from e
+    
     async def start_mission(self, mission_id: str) -> bool:
         """
         Start a mission.
@@ -241,6 +366,50 @@ class MissionController:
         current_status = mission_data.get("status")
         if current_status not in ("created", "paused"):
             self.logger.error(f"Cannot start mission in status: {current_status}")
+            return False
+        
+        # ═══════════════════════════════════════════════════════════
+        # On-Demand VM Provisioning: Ensure VM is ready before starting
+        # ═══════════════════════════════════════════════════════════
+        try:
+            # Get user_id from mission data (or created_by field)
+            user_id = mission_data.get("created_by") or mission_data.get("user_id")
+            if user_id:
+                # Import UserRepository
+                from ..core.database import UserRepository
+                from ..core.database.connection import get_db_pool
+                
+                # Get UserRepository instance
+                db_pool = get_db_pool()
+                if db_pool:
+                    user_repo = UserRepository(db_pool)
+                    
+                    # Ensure VM is ready (provision if needed)
+                    self.logger.info(f"Checking VM status for user {user_id}...")
+                    vm_info = await self._ensure_vm_is_ready(str(user_id), user_repo)
+                    self.logger.info(
+                        f"VM ready for mission {mission_id}: "
+                        f"IP {vm_info.get('ip_address')}"
+                    )
+                else:
+                    self.logger.warning(
+                        "Database pool not available. Skipping VM provisioning check."
+                    )
+            else:
+                self.logger.warning(
+                    f"No user_id found in mission {mission_id}. "
+                    "Skipping VM provisioning."
+                )
+        except Exception as e:
+            self.logger.error(
+                f"Failed to provision VM for mission {mission_id}: {e}",
+                exc_info=True
+            )
+            # Update mission status to failed
+            await self.blackboard.update_mission_status(
+                mission_id,
+                MissionStatus.FAILED
+            )
             return False
         
         # Update status to starting
@@ -1592,22 +1761,102 @@ class MissionController:
             else:
                 response_content = "✅ No pending approvals."
         
+        elif "check environment" in content or "environment status" in content or "بيئة" in content:
+            # Check VM/execution environment status
+            try:
+                from ..core.database.user_repository import UserRepository
+                user_repo = UserRepository(self.blackboard.redis)
+                mission_data = await self.blackboard.get_mission(mission_id)
+                
+                if mission_data:
+                    user_id = mission_data.get("created_by")
+                    if user_id:
+                        user_data = await user_repo.get(str(user_id))
+                        if user_data and user_data.get("metadata"):
+                            metadata = user_data["metadata"]
+                            vm_status = metadata.get("vm_status", "not_created")
+                            vm_ip = metadata.get("vm_ip", "N/A")
+                            vm_id = metadata.get("vm_id", "N/A")
+                            
+                            status_emoji = {
+                                "ready": "✅",
+                                "creating": "🔄",
+                                "pending": "⏳",
+                                "configuring": "🔧",
+                                "stopped": "😴",
+                                "error": "❌",
+                                "not_created": "📦"
+                            }.get(vm_status, "❓")
+                            
+                            response_content = (
+                                f"🖥️ **Execution Environment Status**\n\n"
+                                f"**Status:** {status_emoji} {vm_status.upper()}\n"
+                            )
+                            
+                            if vm_status == "ready":
+                                response_content += (
+                                    f"**VM IP:** {vm_ip}\n"
+                                    f"**VM ID:** {vm_id[:16]}...\n\n"
+                                    "✅ Your environment is ready for command execution.\n"
+                                    "You can now run commands using `run <command>`."
+                                )
+                            elif vm_status in ["creating", "pending", "configuring"]:
+                                response_content += (
+                                    "\n⏳ Your environment is being prepared.\n"
+                                    "This typically takes 5-10 minutes.\n\n"
+                                    "Please wait and check back shortly."
+                                )
+                            elif vm_status == "stopped":
+                                response_content += (
+                                    "\n😴 Your environment is currently stopped.\n"
+                                    "It will start automatically when you run a command."
+                                )
+                            elif vm_status == "error":
+                                response_content += (
+                                    "\n❌ There was an error with your environment.\n"
+                                    "Please go to Settings > Environment to troubleshoot."
+                                )
+                            else:
+                                response_content += (
+                                    "\n📦 Your execution environment has not been created.\n\n"
+                                    "**To create your environment:**\n"
+                                    "1. Go to Settings > Environment\n"
+                                    "2. Click 'Create Execution Environment'\n"
+                                    "3. Wait for provisioning to complete"
+                                )
+                        else:
+                            response_content = "❓ Unable to retrieve environment information."
+                    else:
+                        response_content = "❓ No user associated with this mission."
+                else:
+                    response_content = "❓ Mission not found."
+            except Exception as e:
+                self.logger.error(f"Environment check error: {e}")
+                response_content = "❌ Error checking environment status. Please try again."
+        
         elif "help" in content or "مساعدة" in content:
             response_content = (
-                "📖 **Available Commands:**\n\n"
+                "📖 **RAGLOX Agent Commands:**\n\n"
                 "**Mission Control:**\n"
-                "  - `status` - Get mission status\n"
-                "  - `pause` - Pause the mission\n"
-                "  - `resume` - Resume the mission\n"
-                "  - `pending` - List pending approvals\n\n"
-                "**Shell Access:**\n"
-                "  - `get shell access` - Open terminal\n"
-                "  - `run <command>` - Execute a command\n\n"
+                "  - `status` - Get current mission status and progress\n"
+                "  - `pause` - Pause the mission execution\n"
+                "  - `resume` - Resume paused mission\n"
+                "  - `pending` - List actions awaiting your approval\n\n"
+                "**Execution Commands:**\n"
+                "  - `run <command>` - Execute a command on target environment\n"
+                "  - `get shell access` - Connect to the execution terminal\n\n"
+                "**Planning & Analysis:**\n"
+                "  - Ask me to create a penetration testing plan\n"
+                "  - Ask about discovered vulnerabilities\n"
+                "  - Request next step recommendations\n\n"
+                "**Environment:**\n"
+                "  - `check environment` - Verify execution environment status\n\n"
                 "**Examples:**\n"
-                "  - `run ls -la`\n"
-                "  - `run nmap -sV target`\n"
-                "  - `run whoami`\n\n"
-                "You can also ask me anything about the mission!"
+                "  - `run nmap -sV -p 1-1000 192.168.1.1`\n"
+                "  - `Create a plan for testing web application security`\n"
+                "  - `What vulnerabilities have been found?`\n\n"
+                "💡 **Note:** Commands execute on your real target environment.\n"
+                "   No simulated outputs - all results are from actual execution."
             )
         
         else:
@@ -1630,14 +1879,17 @@ class MissionController:
         Execute a shell command on the mission's target environment.
         
         Uses the user's VM environment via SSH for real command execution.
-        Falls back to simulation mode if no environment is available.
+        Returns clear error messages if no environment is available.
+        
+        NO SIMULATION MODE: This function only executes real commands.
+        If no environment is available, it returns an error with instructions.
         
         Args:
             mission_id: Mission ID
             command: Command to execute
             
         Returns:
-            Command output as string
+            Command output as string (real output or error message)
         """
         try:
             from ..api.websocket import broadcast_terminal_output
@@ -1873,11 +2125,12 @@ class MissionController:
                     # Fall through to simulation mode
             
             # ═══════════════════════════════════════════════════════════════
-            # FALLBACK: Simulation mode when no VM environment is available
+            # NO EXECUTION AVAILABLE: Return clear error with VM status
             # ═══════════════════════════════════════════════════════════════
             
             if not executed_via_ssh:
-                # Check VM status to provide helpful message
+                # Check VM status to provide helpful and actionable message
+                vm_status = "unknown"
                 vm_status_msg = ""
                 try:
                     from ..core.database.user_repository import UserRepository
@@ -1888,84 +2141,92 @@ class MissionController:
                         if user_id:
                             user_data = await user_repo.get(str(user_id))
                             if user_data and user_data.get("metadata"):
-                                vm_status = user_data["metadata"].get("vm_status")
-                                if vm_status == "not_created":
-                                    vm_status_msg = "💡 Your execution environment will be created when you create your first mission. Using simulation mode for now."
-                                elif vm_status in ["pending", "creating", "configuring"]:
-                                    vm_status_msg = "⏳ Your execution environment is being set up (5-10 minutes). Using simulation mode in the meantime."
-                                elif vm_status == "stopped":
-                                    vm_status_msg = "😴 Your VM is waking up. Using simulation mode temporarily."
+                                vm_status = user_data["metadata"].get("vm_status", "not_created")
                 except Exception:
                     pass
                 
-                self.logger.info(f"Using simulation mode for command: {command}")
+                self.logger.warning(f"Cannot execute command - no VM available. VM status: {vm_status}")
                 
-                # Add helpful message if we have VM status info
-                status_prefix = [vm_status_msg, ""] if vm_status_msg else []
-                
-                if command.startswith("ls"):
-                    output_lines = status_prefix + [
-                        "total 24",
-                        "drwxr-xr-x  4 root root 4096 Jan  6 12:00 .",
-                        "drwxr-xr-x 10 root root 4096 Jan  6 12:00 ..",
-                        "-rw-r--r--  1 root root 1024 Jan  6 12:00 config.txt",
-                        "-rwxr-xr-x  1 root root 2048 Jan  6 12:00 start.sh",
-                        "drwxr-xr-x  2 root root 4096 Jan  6 12:00 logs",
-                        "drwxr-xr-x  2 root root 4096 Jan  6 12:00 data",
+                # Provide clear status-specific messages instead of fake simulated output
+                if vm_status == "not_created":
+                    output_lines = [
+                        "❌ Execution Environment Not Available",
                         "",
-                        "[SIMULATION MODE - No VM environment configured]"
-                    ]
-                elif command.startswith("pwd"):
-                    output_lines = status_prefix + ["/home/ubuntu/mission", "", "[SIMULATION MODE]"]
-                elif command.startswith("whoami"):
-                    output_lines = status_prefix + ["ubuntu", "", "[SIMULATION MODE]"]
-                elif command.startswith("id"):
-                    output_lines = status_prefix + ["uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),27(sudo)", "", "[SIMULATION MODE]"]
-                elif command.startswith("uname"):
-                    output_lines = status_prefix + ["Linux raglox-sandbox 5.15.0-91-generic x86_64 GNU/Linux", "", "[SIMULATION MODE]"]
-                elif command.startswith("df"):
-                    output_lines = status_prefix + [
-                        "Filesystem     1K-blocks    Used Available Use% Mounted on",
-                        "/dev/sda1       50000000 5000000  45000000  10% /",
+                        "Your execution environment has not been created yet.",
                         "",
-                        "[SIMULATION MODE]"
-                    ]
-                elif command.startswith("nmap"):
-                    output_lines = status_prefix + [
-                        "Starting Nmap 7.94 ( https://nmap.org )",
-                        "Nmap scan report for target",
-                        "Host is up (0.0010s latency).",
-                        "PORT     STATE SERVICE    VERSION",
-                        "22/tcp   open  ssh        OpenSSH 8.4p1",
-                        "80/tcp   open  http       Apache httpd 2.4.51",
-                        "443/tcp  open  https      nginx 1.21.6",
-                        "Nmap done: 1 IP address (1 host up)",
+                        "📋 To enable command execution:",
+                        "   1. Go to Settings > Environment",
+                        "   2. Click 'Create Execution Environment'",
+                        "   3. Wait for provisioning to complete (5-10 minutes)",
                         "",
-                        "[SIMULATION MODE]"
-                    ]
-                elif command.startswith("cat"):
-                    output_lines = status_prefix + [
-                        "# Configuration File",
-                        "hostname=target-server",
-                        "ip=192.168.1.100",
+                        "💡 Once your environment is ready, you'll be able to execute",
+                        "   real commands on your targets.",
                         "",
-                        "[SIMULATION MODE]"
+                        f"Command queued: {command}"
                     ]
-                elif command.startswith("ps"):
-                    output_lines = status_prefix + [
-                        "  PID TTY          TIME CMD",
-                        "    1 ?        00:00:02 systemd",
-                        " 1024 ?        00:00:00 sshd",
-                        " 1025 ?        00:00:01 apache2",
+                    exit_code = 126  # Command not executable
+                elif vm_status in ["pending", "creating", "configuring"]:
+                    output_lines = [
+                        "⏳ Execution Environment Being Prepared",
                         "",
-                        "[SIMULATION MODE]"
+                        "Your execution environment is currently being set up.",
+                        "This typically takes 5-10 minutes.",
+                        "",
+                        "📊 Current Status: " + vm_status.upper(),
+                        "",
+                        "Please wait for the environment to be ready.",
+                        "You will be notified when execution is available.",
+                        "",
+                        f"Command queued: {command}",
+                        "",
+                        "💡 Tip: Use 'status' command to check environment readiness."
                     ]
+                    exit_code = 126
+                elif vm_status == "stopped":
+                    output_lines = [
+                        "😴 Execution Environment is Stopped",
+                        "",
+                        "Your environment is currently stopped to save resources.",
+                        "It will start automatically when needed.",
+                        "",
+                        "⏳ Starting environment now...",
+                        "Please try your command again in about 30 seconds.",
+                        "",
+                        f"Command queued: {command}"
+                    ]
+                    exit_code = 126
+                elif vm_status == "error":
+                    output_lines = [
+                        "❌ Execution Environment Error",
+                        "",
+                        "There was an error with your execution environment.",
+                        "",
+                        "🔧 Troubleshooting steps:",
+                        "   1. Go to Settings > Environment",
+                        "   2. Check the error details",
+                        "   3. Try 'Recreate Environment'",
+                        "",
+                        "If the problem persists, please contact support.",
+                        "",
+                        f"Command: {command}"
+                    ]
+                    exit_code = 1
                 else:
-                    output_lines = status_prefix + [
-                        f"Command '{command}' executed successfully",
+                    output_lines = [
+                        "❌ Cannot Execute Command",
                         "",
-                        "[SIMULATION MODE - Configure VM environment for real execution]"
+                        "Shell access is not currently available.",
+                        "",
+                        "📋 Possible reasons:",
+                        "   • Environment not configured",
+                        "   • Network connectivity issues",
+                        "   • Authentication expired",
+                        "",
+                        "Please check your environment settings and try again.",
+                        "",
+                        f"Command: {command}"
                     ]
+                    exit_code = 1
             
             output = "\n".join(output_lines)
             

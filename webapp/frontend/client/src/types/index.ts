@@ -171,6 +171,12 @@ export interface ChatMessage {
   // Command execution context (for terminal integration)
   command?: string;
   output?: string[];
+  // Optimistic update status
+  status?: "pending" | "sending" | "sent" | "failed" | "streaming" | "complete";
+  // Temporary ID for optimistic updates (will be replaced by server ID)
+  tempId?: string;
+  // Error message if failed
+  error?: string;
 }
 
 // ============================================
@@ -198,6 +204,9 @@ export type WebSocketEventType =
   | "chat_message"
   | "ai_plan"
   | "mission_update"
+  | "ai_token_chunk"  // New: Streaming token chunk
+  | "ai_response_start"  // New: Response stream started
+  | "ai_response_end"  // New: Response stream ended
   | "error";
 
 export interface WebSocketMessage {

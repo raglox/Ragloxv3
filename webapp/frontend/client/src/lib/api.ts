@@ -42,6 +42,43 @@ import {
 
 let authToken: string | null = null;
 
+// Storage keys - must match authStore
+const ZUSTAND_AUTH_KEY = 'raglox-auth';
+
+/**
+ * Initialize token from storage on module load
+ * This ensures the token is available before any API calls
+ */
+function initializeToken(): void {
+  if (typeof window === 'undefined') return;
+  
+  // First, try to get from direct storage key
+  const directToken = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (directToken) {
+    authToken = directToken;
+    return;
+  }
+  
+  // Second, try to get from zustand persisted state
+  try {
+    const zustandState = localStorage.getItem(ZUSTAND_AUTH_KEY);
+    if (zustandState) {
+      const parsed = JSON.parse(zustandState);
+      const token = parsed?.state?.token;
+      if (token) {
+        authToken = token;
+        // Also store in direct key for consistency
+        localStorage.setItem(AUTH_TOKEN_KEY, token);
+      }
+    }
+  } catch (e) {
+    console.warn('[API] Failed to parse zustand auth state:', e);
+  }
+}
+
+// Initialize token immediately when module loads
+initializeToken();
+
 /**
  * Set the authentication token
  */
@@ -60,12 +97,31 @@ export function setAuthToken(token: string | null): void {
 export function getAuthToken(): string | null {
   if (authToken) return authToken;
 
-  // Try to load from localStorage
+  // Try to load from localStorage (direct key)
   const storedToken = localStorage.getItem(AUTH_TOKEN_KEY);
   if (storedToken) {
     authToken = storedToken;
+    return authToken;
   }
-  return authToken;
+  
+  // Fallback: try zustand persisted state
+  try {
+    const zustandState = localStorage.getItem(ZUSTAND_AUTH_KEY);
+    if (zustandState) {
+      const parsed = JSON.parse(zustandState);
+      const token = parsed?.state?.token;
+      if (token) {
+        authToken = token;
+        // Store in direct key for future
+        localStorage.setItem(AUTH_TOKEN_KEY, token);
+        return authToken;
+      }
+    }
+  } catch (e) {
+    // Ignore parse errors
+  }
+  
+  return null;
 }
 
 /**
@@ -284,7 +340,7 @@ export interface RegisterRequest {
   email: string;
   password: string;
   full_name: string;
-  organization?: string;
+  organization_name?: string;
   vm_config?: {
     plan_id: string;
     location_id: string;
@@ -384,7 +440,7 @@ export const authApi = {
   },
 
   // Update profile
-  updateProfile: async (data: { full_name?: string; organization?: string }): Promise<User> => {
+  updateProfile: async (data: { fullname?: string; organization_name?: string }): Promise<User> => {
     return fetchApi<User>("/api/v1/auth/me", {
       method: "PUT",
       body: JSON.stringify(data),

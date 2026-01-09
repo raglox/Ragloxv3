@@ -22,14 +22,22 @@ export const isSandbox = typeof window !== 'undefined' && (
 // ============================================
 
 // Backend server IP - configurable via environment variable
-const BACKEND_HOST = import.meta.env.VITE_BACKEND_HOST || '172.245.232.188';
+const BACKEND_HOST = import.meta.env.VITE_BACKEND_HOST || '208.115.230.194';
 const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || '8000';
 
+// Use same-origin for API if available (for proxied setup), otherwise use explicit host:port
+const USE_SAME_ORIGIN = import.meta.env.VITE_USE_SAME_ORIGIN === 'true' || 
+  (typeof window !== 'undefined' && window.location.port === '80');
+
 // API Base URL
-export const API_BASE_URL = import.meta.env.VITE_API_URL || `http://${BACKEND_HOST}:${BACKEND_PORT}`;
+export const API_BASE_URL = USE_SAME_ORIGIN 
+  ? (typeof window !== 'undefined' ? window.location.origin : `http://${BACKEND_HOST}:${BACKEND_PORT}`)
+  : (import.meta.env.VITE_API_URL || `http://${BACKEND_HOST}:${BACKEND_PORT}`);
 
 // WebSocket Base URL
-export const WS_BASE_URL = import.meta.env.VITE_WS_URL || `ws://${BACKEND_HOST}:${BACKEND_PORT}`;
+export const WS_BASE_URL = USE_SAME_ORIGIN
+  ? (typeof window !== 'undefined' ? `ws://${window.location.host}` : `ws://${BACKEND_HOST}:${BACKEND_PORT}`)
+  : (import.meta.env.VITE_WS_URL || `ws://${BACKEND_HOST}:${BACKEND_PORT}`);
 
 // API Prefix
 export const API_PREFIX = '/api/v1';

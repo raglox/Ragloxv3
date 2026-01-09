@@ -103,6 +103,9 @@ export function useWebSocket(
   const [events, setEvents] = useState<EventCard[]>([]);
   const [planTasks, setPlanTasks] = useState<PlanTask[]>([]);
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
+  
+  // Streaming state
+  const [currentStreamingMessageId, setCurrentStreamingMessageId] = useState<string | null>(null);
 
   // New data arrays
   const [newTargets, setNewTargets] = useState<Target[]>([]);
@@ -214,6 +217,54 @@ export function useWebSocket(
       case "chat_message":
         setNewChatMessages((prev) => [...prev, data as ChatMessage]);
         setEvents((prev) => [eventCard, ...prev].slice(0, MAX_EVENTS_DISPLAY));
+        break;
+
+      case "ai_response_start":
+        // Start streaming - create a new message with streaming status
+        {
+          const streamId = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          setCurrentStreamingMessageId(streamId);
+          const streamMessage: ChatMessage = {
+            id: streamId,
+            role: "assistant",
+            content: "",
+            timestamp: new Date().toISOString(),
+            status: "streaming",
+          };
+          setNewChatMessages((prev) => [...prev, streamMessage]);
+        }
+        break;
+
+      case "ai_token_chunk":
+        // Append token chunk to streaming message
+        {
+          const chunk = (data as { chunk?: string }).chunk || "";
+          if (currentStreamingMessageId && chunk) {
+            setNewChatMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === currentStreamingMessageId
+                  ? { ...msg, content: msg.content + chunk }
+                  : msg
+              )
+            );
+          }
+        }
+        break;
+
+      case "ai_response_end":
+        // Mark streaming as complete
+        {
+          if (currentStreamingMessageId) {
+            setNewChatMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === currentStreamingMessageId
+                  ? { ...msg, status: "complete" }
+                  : msg
+              )
+            );
+            setCurrentStreamingMessageId(null);
+          }
+        }
         break;
 
       case "ai_plan":
@@ -335,9 +386,17 @@ export function useWebSocket(
   // ============================================
 
   const fetchData = useCallback(async () => {
+    // Import getAuthHeaders for authenticated polling requests
+    const { getAuthHeaders } = await import("@/lib/api");
+    const authHeaders = getAuthHeaders();
+    const headers = {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    };
+
     try {
       // Fetch stats
-      const statsResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/stats`);
+      const statsResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/stats`, { headers });
       if (statsResponse.ok) {
         const stats = await statsResponse.json();
         handleMessage({
@@ -348,7 +407,7 @@ export function useWebSocket(
       }
 
       // Fetch approvals
-      const approvalsResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/approvals`);
+      const approvalsResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/approvals`, { headers });
       if (approvalsResponse.ok) {
         const approvals = await approvalsResponse.json();
         if (Array.isArray(approvals) && approvals.length > 0) {
@@ -363,7 +422,7 @@ export function useWebSocket(
       }
 
       // Fetch chat messages (latest 10)
-      const chatResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/chat?limit=10`);
+      const chatResponse = await fetch(`${API_BASE_URL}/api/v1/missions/${missionId}/chat?limit=10`, { headers });
       if (chatResponse.ok) {
         const messages = await chatResponse.json();
         if (Array.isArray(messages) && messages.length > 0) {
