@@ -115,6 +115,34 @@ class TacticalContext:
     vm_status: str = "not_created"
     vm_ip: Optional[str] = None
     ssh_connected: bool = False
+    
+    # ═══════════════════════════════════════════════════════════
+    # Knowledge Base Intelligence (RX Modules + Nuclei Templates)
+    # ═══════════════════════════════════════════════════════════
+    
+    # RX Modules Intelligence (Atomic Red Team)
+    available_rx_modules: List[Dict] = field(default_factory=list)
+    rx_modules_for_vulns: Dict[str, List[Dict]] = field(default_factory=dict)
+    rx_modules_by_platform: Dict[str, List[Dict]] = field(default_factory=dict)
+    rx_modules_by_technique: Dict[str, List[Dict]] = field(default_factory=dict)
+    recommended_rx_modules: List[Dict] = field(default_factory=list)
+    
+    # Nuclei Templates Intelligence
+    available_nuclei_templates: List[Dict] = field(default_factory=list)
+    nuclei_templates_by_cve: Dict[str, Dict] = field(default_factory=dict)
+    nuclei_templates_by_severity: Dict[str, List[Dict]] = field(default_factory=dict)
+    suggested_scan_templates: List[Dict] = field(default_factory=list)
+    nuclei_critical_findings: List[Dict] = field(default_factory=list)
+    
+    # MITRE ATT&CK Intelligence
+    relevant_techniques: List[Dict] = field(default_factory=list)
+    relevant_tactics: List[Dict] = field(default_factory=list)
+    technique_to_rx_mapping: Dict[str, List[str]] = field(default_factory=dict)
+    
+    # Knowledge Statistics
+    total_rx_modules_available: int = 0
+    total_nuclei_templates_available: int = 0
+    knowledge_loaded: bool = False
 
 
 @dataclass
@@ -413,7 +441,8 @@ class TacticalReasoningEngine:
         vm_ip = mission.metadata.get("vm_ip") if hasattr(mission, 'metadata') else None
         ssh_connected = mission.metadata.get("ssh_connected", False) if hasattr(mission, 'metadata') else False
         
-        return TacticalContext(
+        # Build initial context
+        context = TacticalContext(
             mission_id=mission_id,
             mission_phase=phase,
             mission_goals=goals,
@@ -1116,6 +1145,314 @@ Be thorough, tactical, and security-conscious.
             base_confidence -= 0.05
         
         return max(0.3, min(0.95, base_confidence))
+    
+    async def _enrich_context_with_knowledge(
+        self,
+        context: TacticalContext
+    ) -> TacticalContext:
+        """
+        إثراء السياق التكتيكي بمعلومات قاعدة المعرفة
+        
+        Steps:
+        1. Enrich with RX Modules intelligence
+        2. Enrich with Nuclei Templates intelligence
+        3. Map MITRE ATT&CK techniques
+        4. Build recommendations
+        """
+        
+        if not self.knowledge or not self.knowledge.is_loaded():
+            self.logger.warning("Knowledge base not loaded, skipping enrichment")
+            context.knowledge_loaded = False
+            return context
+        
+        context.knowledge_loaded = True
+        
+        try:
+            # 1. Enrich with RX Modules
+            context = await self._enrich_with_rx_modules(context)
+            
+            # 2. Enrich with Nuclei Templates
+            context = await self._enrich_with_nuclei_intelligence(context)
+            
+            # 3. Map MITRE ATT&CK
+            context = await self._enrich_with_mitre_attack(context)
+            
+            # 4. Update statistics
+            stats = self.knowledge.get_stats()
+            if stats:
+                context.total_rx_modules_available = stats.total_rx_modules
+                context.total_nuclei_templates_available = stats.total_nuclei_templates
+            
+            self.logger.info(
+                f"Knowledge enrichment complete: "
+                f"{len(context.available_rx_modules)} RX modules, "
+                f"{len(context.suggested_scan_templates)} Nuclei templates"
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error enriching context with knowledge: {e}", exc_info=True)
+        
+        return context
+    
+    async def _enrich_with_rx_modules(
+        self,
+        context: TacticalContext
+    ) -> TacticalContext:
+        """
+        إثراء السياق بمعلومات RX Modules (Atomic Red Team)
+        
+        Logic:
+        1. Map RX modules to discovered vulnerabilities
+        2. Find modules by platform
+        3. Build technique-to-module mappings
+        4. Generate recommendations
+        """
+        
+        # 1. Map RX modules to vulnerabilities
+        for vuln in context.vulnerabilities:
+            vuln_id = vuln.get("id")
+            vuln_type = vuln.get("vuln_type", "")
+            technique_id = vuln.get("technique_id")
+            platform = vuln.get("platform", "windows")
+            
+            modules_for_vuln = []
+            
+            # Try CVE-based lookup
+            if vuln_type.startswith("CVE-"):
+                rx_id = f"rx-{vuln_type.lower().replace('-', '_')}"
+                module = self.knowledge.get_module(rx_id)
+                if module:
+                    modules_for_vuln.append(module)
+                    self.logger.debug(f"Found RX module {rx_id} for {vuln_type}")
+            
+            # Try technique-based lookup
+            if technique_id:
+                modules = self.knowledge.get_modules_for_technique(
+                    technique_id,
+                    platform=platform
+                )
+                if modules:
+                    modules_for_vuln.extend(modules[:3])  # Top 3
+                    self.logger.debug(f"Found {len(modules)} modules for {technique_id}")
+            
+            # Try search-based lookup
+            if not modules_for_vuln and vuln_type:
+                modules = self.knowledge.search_modules(
+                    query=vuln_type,
+                    platform=platform,
+                    limit=3
+                )
+                if modules:
+                    modules_for_vuln.extend(modules)
+                    self.logger.debug(f"Found {len(modules)} modules via search for {vuln_type}")
+            
+            if modules_for_vuln:
+                context.rx_modules_for_vulns[vuln_id] = modules_for_vuln
+        
+        # 2. Get RX modules by platform (for general availability)
+        for platform in ["windows", "linux", "macos"]:
+            modules = self.knowledge.get_modules_for_platform(
+                platform,
+                limit=20
+            )
+            if modules:
+                context.rx_modules_by_platform[platform] = modules
+        
+        # 3. Build technique-to-module mapping
+        for technique in context.relevant_techniques:
+            technique_id = technique.get("id")
+            if technique_id:
+                modules = self.knowledge.get_modules_for_technique(technique_id)
+                if modules:
+                    context.technique_to_rx_mapping[technique_id] = [
+                        m.get("rx_module_id") for m in modules
+                    ]
+        
+        # 4. Build recommendations based on mission phase
+        if context.mission_phase == MissionPhase.INITIAL_ACCESS:
+            # Recommend exploitation modules
+            for vuln_id, modules in context.rx_modules_for_vulns.items():
+                if modules:
+                    context.recommended_rx_modules.extend(modules[:1])  # Top 1 per vuln
+        
+        elif context.mission_phase == MissionPhase.POST_EXPLOITATION:
+            # Recommend privilege escalation and persistence
+            privesc_modules = self.knowledge.search_modules(
+                query="privilege escalation",
+                limit=5
+            )
+            context.recommended_rx_modules.extend(privesc_modules)
+        
+        elif context.mission_phase == MissionPhase.LATERAL_MOVEMENT:
+            # Recommend lateral movement modules
+            lateral_modules = self.knowledge.search_modules(
+                query="lateral movement",
+                limit=5
+            )
+            context.recommended_rx_modules.extend(lateral_modules)
+        
+        # Collect all unique available modules
+        all_modules = []
+        for modules_list in context.rx_modules_for_vulns.values():
+            all_modules.extend(modules_list)
+        for modules_list in context.rx_modules_by_platform.values():
+            all_modules.extend(modules_list)
+        
+        # Deduplicate
+        seen = set()
+        unique_modules = []
+        for m in all_modules:
+            mid = m.get("rx_module_id")
+            if mid and mid not in seen:
+                seen.add(mid)
+                unique_modules.append(m)
+        
+        context.available_rx_modules = unique_modules[:50]  # Limit for context size
+        
+        return context
+    
+    async def _enrich_with_nuclei_intelligence(
+        self,
+        context: TacticalContext
+    ) -> TacticalContext:
+        """
+        إثراء السياق بمعلومات Nuclei Templates
+        
+        Logic:
+        1. Map Nuclei templates to CVEs
+        2. Find templates by severity
+        3. Suggest scans based on discovered services
+        4. Identify critical findings
+        """
+        
+        # 1. Map Nuclei templates to CVEs
+        for vuln in context.vulnerabilities:
+            cve_id = vuln.get("cve_id")
+            if cve_id:
+                template = self.knowledge.get_nuclei_template_by_cve(cve_id)
+                if template:
+                    context.nuclei_templates_by_cve[cve_id] = template
+                    self.logger.debug(f"Found Nuclei template for {cve_id}")
+        
+        # 2. Get templates by severity
+        for severity in ["critical", "high", "medium"]:
+            templates = self.knowledge.get_nuclei_templates_by_severity(
+                severity=severity,
+                limit=10
+            )
+            if templates:
+                context.nuclei_templates_by_severity[severity] = templates
+        
+        # 3. Suggest scan templates based on discovered services
+        for target in context.targets:
+            # Extract services
+            services = set()
+            for port in target.get("ports", []):
+                service = port.get("service")
+                if service:
+                    services.add(service.lower())
+            
+            # Find templates for each service
+            for service in list(services)[:5]:  # Limit to 5 services
+                # Critical templates
+                critical_templates = self.knowledge.search_nuclei_templates(
+                    query=service,
+                    severity="critical",
+                    limit=3
+                )
+                context.suggested_scan_templates.extend(critical_templates)
+                
+                # High templates
+                high_templates = self.knowledge.search_nuclei_templates(
+                    query=service,
+                    severity="high",
+                    limit=3
+                )
+                context.suggested_scan_templates.extend(high_templates)
+        
+        # 4. Identify critical findings from existing vulnerabilities
+        for vuln in context.vulnerabilities:
+            if vuln.get("severity", "").lower() in ["critical", "high"]:
+                # Check if we have a Nuclei template for this
+                vuln_type = vuln.get("vuln_type", "")
+                if vuln_type:
+                    templates = self.knowledge.search_nuclei_templates(
+                        query=vuln_type,
+                        limit=1
+                    )
+                    if templates:
+                        context.nuclei_critical_findings.extend(templates)
+        
+        # Deduplicate suggested templates
+        seen = set()
+        unique_templates = []
+        for t in context.suggested_scan_templates:
+            tid = t.get("template_id")
+            if tid and tid not in seen:
+                seen.add(tid)
+                unique_templates.append(t)
+        
+        context.suggested_scan_templates = unique_templates[:20]  # Limit
+        
+        # Collect all unique templates
+        all_templates = []
+        all_templates.extend(context.nuclei_templates_by_cve.values())
+        for templates_list in context.nuclei_templates_by_severity.values():
+            all_templates.extend(templates_list)
+        
+        # Deduplicate
+        seen = set()
+        unique = []
+        for t in all_templates:
+            tid = t.get("template_id")
+            if tid and tid not in seen:
+                seen.add(tid)
+                unique.append(t)
+        
+        context.available_nuclei_templates = unique[:50]  # Limit
+        
+        return context
+    
+    async def _enrich_with_mitre_attack(
+        self,
+        context: TacticalContext
+    ) -> TacticalContext:
+        """
+        إثراء السياق بمعلومات MITRE ATT&CK
+        
+        Logic:
+        1. Extract techniques from vulnerabilities
+        2. Map techniques to tactics
+        3. Build technique coverage map
+        """
+        
+        # 1. Extract unique techniques
+        technique_ids = set()
+        for vuln in context.vulnerabilities:
+            technique_id = vuln.get("technique_id")
+            if technique_id:
+                technique_ids.add(technique_id)
+        
+        # Also from successful attempts
+        for tech in context.successful_techniques:
+            if tech:
+                technique_ids.add(tech)
+        
+        # Get technique details
+        for tech_id in technique_ids:
+            technique = self.knowledge.get_technique(tech_id)
+            if technique:
+                context.relevant_techniques.append(technique)
+        
+        # 2. Extract tactics from techniques
+        tactic_ids = set()
+        for technique in context.relevant_techniques:
+            # Tactics would be in technique metadata
+            # For now, we'll extract from technique ID patterns
+            # T1003 → TA0006 (Credential Access)
+            pass  # TODO: Implement tactic mapping if available
+        
+        return context
     
     async def _enrich_tactical_reasoning(
         self,

@@ -36,6 +36,17 @@ from .base import (
 from .tools import ToolResult, get_tool_registry
 from .executor import AgentExecutor, SSHConfig, get_agent_executor
 
+# Import TacticalReasoningEngine for advanced decision-making
+try:
+    from ..reasoning.tactical_reasoning import (
+        TacticalReasoningEngine,
+        TacticalReasoning,
+        TacticalContext
+    )
+    TACTICAL_REASONING_AVAILABLE = True
+except ImportError:
+    TACTICAL_REASONING_AVAILABLE = False
+
 
 # System prompt for the hacker agent
 HACKER_AGENT_SYSTEM_PROMPT = """You are RAGLOX, an advanced AI-powered penetration testing assistant with a hacker's mindset.
@@ -133,6 +144,11 @@ class HackerAgent(BaseAgent):
         # Track current thinking process
         self._thinking_steps: List[ThinkingStep] = []
         self._max_iterations = 10  # Prevent infinite loops
+        
+        # Tactical reasoning engine (lazy loaded)
+        self._tactical_engine: Optional[Any] = None  # TacticalReasoningEngine
+        self._current_tactical_reasoning: Optional[Any] = None  # TacticalReasoning
+        self._use_tactical_reasoning = TACTICAL_REASONING_AVAILABLE
     
     async def _get_llm_service(self):
         """Lazy load LLM service"""
@@ -144,6 +160,42 @@ class HackerAgent(BaseAgent):
                 self.logger.error(f"Failed to get LLM service: {e}")
                 return None
         return self._llm_service
+    
+    async def _get_tactical_engine(self):
+        """
+        Lazy load TacticalReasoningEngine
+        
+        Returns:
+            TacticalReasoningEngine instance or None if not available
+        """
+        if not self._use_tactical_reasoning:
+            return None
+        
+        if self._tactical_engine is None:
+            try:
+                from ..reasoning.tactical_reasoning import TacticalReasoningEngine
+                from ...infrastructure.blackboard.blackboard import get_blackboard
+                from ..knowledge import get_embedded_knowledge
+                from ..memory.operational_memory import get_operational_memory
+                
+                llm_service = await self._get_llm_service()
+                if llm_service is None:
+                    self.logger.warning("Cannot initialize TacticalEngine: LLM service unavailable")
+                    return None
+                
+                self._tactical_engine = TacticalReasoningEngine(
+                    blackboard=get_blackboard(),
+                    llm_service=llm_service,
+                    knowledge=get_embedded_knowledge(),
+                    memory=get_operational_memory()
+                )
+                self.logger.info("TacticalReasoningEngine initialized successfully")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize TacticalReasoningEngine: {e}", exc_info=True)
+                self._use_tactical_reasoning = False
+                return None
+        
+        return self._tactical_engine
     
     async def verify_environment(self, context: AgentContext) -> Dict[str, Any]:
         """
@@ -462,6 +514,64 @@ Return the plan as a JSON array of step objects.
         ]
         
         return any(kw in message_lower for kw in env_keywords)
+    
+    def _should_use_tactical_reasoning(self, message: str, context: AgentContext) -> bool:
+        """
+        Determine if tactical reasoning is needed for this request
+        
+        Use tactical reasoning for:
+        - Complex attack planning
+        - Exploitation decisions
+        - Privilege escalation planning
+        - Lateral movement strategy
+        - Defense evasion techniques
+        
+        Skip for:
+        - Simple status queries
+        - Basic information requests
+        - VM preparation
+        """
+        if not self._use_tactical_reasoning:
+            return False
+        
+        message_lower = message.lower()
+        
+        # Keywords that indicate need for tactical reasoning
+        tactical_keywords = [
+            "exploit", "attack", "hack", "compromise", "penetrate",
+            "bypass", "evade", "escalate", "lateral", "pivot",
+            "privilege", "persistence", "strategy", "plan",
+            "استغلال", "اختراق", "هجوم", "تجاوز", "استراتيجية"
+        ]
+        
+        # Keywords for simple queries (skip reasoning)
+        simple_keywords = [
+            "status", "what", "show", "list", "display", "help",
+            "prepare", "setup", "ready",
+            "الحالة", "اعرض", "ما هو", "تجهيز"
+        ]
+        
+        # Check for tactical keywords
+        has_tactical = any(kw in message_lower for kw in tactical_keywords)
+        
+        # Check for simple keywords
+        has_simple = any(kw in message_lower for kw in simple_keywords) and not has_tactical
+        
+        # Use reasoning if tactical keywords present and not a simple query
+        if has_tactical and not has_simple:
+            return True
+        
+        # Also use reasoning if mission has specific conditions
+        if context and hasattr(context, 'metadata'):
+            # Use reasoning if defenses detected
+            if context.metadata.get("detected_defenses"):
+                return True
+            
+            # Use reasoning if previous failures
+            if context.metadata.get("failed_attempts", 0) > 2:
+                return True
+        
+        return False
     
     async def _get_llm_response(
         self,
