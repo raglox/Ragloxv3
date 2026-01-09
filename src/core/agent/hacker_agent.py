@@ -30,6 +30,9 @@ from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
+# SEC-01: Enhanced exception handling
+from ..exceptions import handle_exception_gracefully
+
 from .base import (
     BaseAgent, AgentCapability, AgentState, AgentContext, AgentResponse
 )
@@ -256,6 +259,11 @@ class HackerAgent(BaseAgent):
             except Exception as e:
                 self.logger.error(f"Failed to get LLM service: {e}")
                 return None
+                raise handle_exception_gracefully(
+                    e,
+                    context='Agent operation',
+                    logger=self.logger
+                )
         return self._llm_service
     
     async def _get_tactical_engine(self):
@@ -291,6 +299,11 @@ class HackerAgent(BaseAgent):
                 self.logger.error(f"Failed to initialize TacticalReasoningEngine: {e}", exc_info=True)
                 self._use_tactical_reasoning = False
                 return None
+                raise handle_exception_gracefully(
+                    e,
+                    context='Agent operation',
+                    logger=self.logger
+                )
         
         return self._tactical_engine
     
@@ -452,6 +465,11 @@ class HackerAgent(BaseAgent):
                     except Exception as e:
                         self.logger.error(f"Tactical reasoning failed: {e}", exc_info=True)
                         # Continue without tactical reasoning
+                        raise handle_exception_gracefully(
+                            e,
+                            context='Agent operation',
+                            logger=self.logger
+                        )
                 else:
                     self.logger.warning("No mission_id in context, skipping tactical reasoning")
             
@@ -497,6 +515,11 @@ class HackerAgent(BaseAgent):
             response.content = f"An error occurred: {str(e)}"
             response.state = AgentState.ERROR
             response.error = str(e)
+            raise handle_exception_gracefully(
+                e,
+                context='Agent operation',
+                logger=self.logger
+            )
         
         return response
     
@@ -597,6 +620,11 @@ class HackerAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"Stream processing error: {e}", exc_info=True)
             yield {"type": "error", "message": str(e)}
+            raise handle_exception_gracefully(
+                e,
+                context='Agent operation',
+                logger=self.logger
+            )
     
     async def create_plan(
         self,
@@ -659,6 +687,11 @@ Return the plan as a JSON array of step objects.
             
         except Exception as e:
             self.logger.error(f"Plan creation error: {e}")
+            raise handle_exception_gracefully(
+                e,
+                context='Agent operation',
+                logger=self.logger
+            )
         
         return []
     
@@ -796,6 +829,11 @@ Return the plan as a JSON array of step objects.
                         
                 except Exception as e:
                     self.logger.warning(f"Function calling failed, falling back to text mode: {e}")
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Agent operation',
+                        logger=self.logger
+                    )
             
             # ═══════════════════════════════════════════════════════════
             # Fallback: Standard text generation (original behavior)
@@ -807,6 +845,11 @@ Return the plan as a JSON array of step objects.
             
         except Exception as e:
             self.logger.error(f"LLM error: {e}")
+            raise handle_exception_gracefully(
+                e,
+                context='Agent operation',
+                logger=self.logger
+            )
         
         return None
     
@@ -927,6 +970,11 @@ Return the plan as a JSON array of step objects.
                 except Exception as e:
                     self.logger.warning(f"Reasoning streaming failed: {e}, falling back to standard streaming")
                     # Fall through to standard streaming
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Agent operation',
+                        logger=self.logger
+                    )
             
             # ═══════════════════════════════════════════════════════════
             # Standard streaming (fallback or non-DeepSeek providers)
@@ -975,6 +1023,11 @@ Return the plan as a JSON array of step objects.
         except Exception as e:
             self.logger.error(f"LLM streaming error: {e}", exc_info=True)
             yield {"type": "error", "content": f"Streaming error: {str(e)}"}
+            raise handle_exception_gracefully(
+                e,
+                context='Agent operation',
+                logger=self.logger
+            )
     
     async def _process_llm_response(
         self,
@@ -1153,6 +1206,11 @@ Return the plan as a JSON array of step objects.
                 success=False,
                 error=str(e),
                 tool_name=tool_name
+            )
+            raise handle_exception_gracefully(
+                e,
+                context='Agent operation',
+                logger=self.logger
             )
     
     def _build_message_with_intelligence(

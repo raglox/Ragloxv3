@@ -10,6 +10,9 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+
+# SEC-01: Enhanced exception handling
+from ..core.exceptions import handle_exception_gracefully
 from fastapi.responses import JSONResponse
 
 from ..core.config import get_settings
@@ -161,6 +164,11 @@ def init_llm_service(settings) -> None:
             
     except Exception as e:
         logger.error(f"Failed to initialize LLM service: {e}", exc_info=True)
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
 
 
 @asynccontextmanager
@@ -206,6 +214,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         app.state.user_repo = None
         app.state.org_repo = None
         app.state.mission_repo = None
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
     
     # ═══════════════════════════════════════════════════════════════
     # INTEGRATION: Initialize Shutdown Manager
@@ -255,6 +268,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
             logger.error(f"❌ Metasploit initialization failed: {e}")
             logger.warning("   Falling back to SIMULATION mode")
             metasploit_adapter = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     else:
         logger.info("🔵 Real Exploitation DISABLED (USE_REAL_EXPLOITS=false)")
         logger.info("   System running in SIMULATION mode")
@@ -292,6 +310,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ C2 Session Manager initialization failed: {e}")
             c2_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     
     # Store C2SessionManager in app state
     app.state.c2_manager = c2_manager
@@ -329,6 +352,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ Firecracker initialization failed: {e}")
             vm_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     
     elif settings.use_oneprovider:
         try:
@@ -354,6 +382,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ OneProvider initialization failed: {e}")
             vm_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     else:
         logger.info("☁️ Cloud Provider Integration DISABLED")
         logger.info("   Set CLOUD_PROVIDER=firecracker or CLOUD_PROVIDER=oneprovider to enable")
@@ -382,6 +415,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ SSH Connection Manager initialization failed: {e}")
             ssh_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     else:
         logger.info("🔐 SSH Connection Manager DISABLED")
     
@@ -402,6 +440,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ Environment Manager initialization failed: {e}")
             environment_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     
     # Store in app state
     app.state.vm_manager = vm_manager
@@ -446,6 +489,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.error(f"❌ Token Store initialization failed: {e}")
         app.state.token_store = None
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
     
     # ===================================================================
     # Initialize Billing Service (Stripe) - SaaS
@@ -467,6 +515,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.error(f"❌ Billing Service initialization failed: {e}")
         app.state.billing_service = None
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
     
     # Initialize Controller with EnvironmentManager for VM/SSH execution
     controller = MissionController(
@@ -513,6 +566,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.error(f"❌ Workflow Orchestrator initialization failed: {e}")
         app.state.workflow_orchestrator = None
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
     
     # ═══════════════════════════════════════════════════════════════
     # INTEGRATION: Setup signal handlers for graceful shutdown

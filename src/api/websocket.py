@@ -13,6 +13,9 @@ from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, status
 from starlette.websockets import WebSocketState
 
+# SEC-01: Enhanced exception handling
+from ..core.exceptions import handle_exception_gracefully
+
 
 logger = logging.getLogger("raglox.websocket")
 
@@ -189,6 +192,11 @@ async def verify_websocket_token(websocket: WebSocket) -> Tuple[bool, Optional[D
     except Exception as e:
         logger.error(f"WebSocket token verification failed: {e}")
         return False, None, selected_subprotocol
+        raise handle_exception_gracefully(
+            e,
+            context='WebSocket operation',
+            logger=logger if 'logger' in locals() else None
+        )
 
 
 async def accept_websocket_with_auth(
@@ -229,6 +237,11 @@ async def accept_websocket_with_auth(
     except Exception as e:
         logger.error(f"Failed to accept WebSocket: {e}")
         return False, None
+        raise handle_exception_gracefully(
+            e,
+            context='WebSocket operation',
+            logger=logger if 'logger' in locals() else None
+        )
     
     # Now check authentication after accepting
     if not is_valid:
@@ -730,6 +743,11 @@ async def broadcast_terminal_output(
         logger.error(f"Failed to broadcast terminal_output: {e}")
         # Store event for polling clients as fallback
         await _store_terminal_event_for_polling(mission_id, command, output, exit_code, status)
+        raise handle_exception_gracefully(
+            e,
+            context='WebSocket operation',
+            logger=logger if 'logger' in locals() else None
+        )
 
 
 async def broadcast_terminal_command_start(
@@ -758,6 +776,11 @@ async def broadcast_terminal_command_start(
         })
     except Exception as e:
         logger.error(f"Failed to broadcast terminal_command_start: {e}")
+        raise handle_exception_gracefully(
+            e,
+            context='WebSocket operation',
+            logger=logger if 'logger' in locals() else None
+        )
 
 
 async def broadcast_terminal_output_line(
@@ -788,6 +811,11 @@ async def broadcast_terminal_output_line(
         })
     except Exception as e:
         logger.error(f"Failed to broadcast terminal_output_line: {e}")
+        raise handle_exception_gracefully(
+            e,
+            context='WebSocket operation',
+            logger=logger if 'logger' in locals() else None
+        )
 
 
 async def broadcast_terminal_command_complete(
@@ -819,6 +847,11 @@ async def broadcast_terminal_command_complete(
         })
     except Exception as e:
         logger.error(f"Failed to broadcast terminal_command_complete: {e}")
+        raise handle_exception_gracefully(
+            e,
+            context='WebSocket operation',
+            logger=logger if 'logger' in locals() else None
+        )
 
 
 async def broadcast_terminal_command_error(
@@ -848,6 +881,11 @@ async def broadcast_terminal_command_error(
         })
     except Exception as e:
         logger.error(f"Failed to broadcast terminal_command_error: {e}")
+        raise handle_exception_gracefully(
+            e,
+            context='WebSocket operation',
+            logger=logger if 'logger' in locals() else None
+        )
 
 
 async def _store_terminal_event_for_polling(
@@ -888,6 +926,11 @@ async def _store_terminal_event_for_polling(
             logger.debug(f"Stored terminal event for polling: {mission_id}")
     except Exception as e:
         logger.warning(f"Failed to store terminal event for polling: {e}")
+        raise handle_exception_gracefully(
+            e,
+            context='WebSocket operation',
+            logger=logger if 'logger' in locals() else None
+        )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -974,6 +1017,11 @@ async def stats_websocket(websocket: WebSocket):
                     "timestamp": datetime.utcnow().isoformat()
                 })
                 await asyncio.sleep(1.0)
+                raise handle_exception_gracefully(
+                    e,
+                    context='WebSocket operation',
+                    logger=logger if 'logger' in locals() else None
+                )
                 
     except WebSocketDisconnect:
         pass
@@ -1090,6 +1138,11 @@ async def circuit_breakers_websocket(websocket: WebSocket):
                     "timestamp": datetime.utcnow().isoformat()
                 })
                 await asyncio.sleep(5.0)
+                raise handle_exception_gracefully(
+                    e,
+                    context='WebSocket operation',
+                    logger=logger if 'logger' in locals() else None
+                )
                 
     except WebSocketDisconnect:
         pass

@@ -40,6 +40,11 @@ from ..core.retry_policy import get_retry_manager
 # ═══════════════════════════════════════════════════════════════
 from ..core.approval_store import ApprovalStore, get_approval_store
 
+# ═══════════════════════════════════════════════════════════════
+# SEC-01: Enhanced Exception Handling
+# ═══════════════════════════════════════════════════════════════
+from ..core.exceptions import handle_exception_gracefully
+
 
 class MissionController:
     """
@@ -340,9 +345,11 @@ class MissionController:
                 VMProvisionStatus.FAILED.value,
                 {"error_message": str(e)}
             )
-            raise Exception(
-                f"Failed to provision execution environment: {e}"
-            ) from e
+            raise handle_exception_gracefully(
+                e,
+                context="VM provisioning",
+                logger=self.logger
+            )
     
     async def start_mission(self, mission_id: str) -> bool:
         """
@@ -412,6 +419,11 @@ class MissionController:
             )
             return False
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Update status to starting
         await self.blackboard.update_mission_status(mission_id, MissionStatus.STARTING)
         
@@ -728,6 +740,11 @@ class MissionController:
                     self.logger.error(f"Failed to initialize real exploitation: {e}")
                     self.logger.warning("Attack specialist falling back to SIMULATION mode")
             
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
             attack = AttackSpecialist(
                 blackboard=Blackboard(settings=self.settings),
                 settings=self.settings,
@@ -772,6 +789,11 @@ class MissionController:
                 except Exception as e:
                     self.logger.error(f"Error cleaning up C2 sessions: {e}")
         
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
         self.logger.info(f"Specialists stopped for mission {mission_id}")
     
     # ═══════════════════════════════════════════════════════════
@@ -864,6 +886,11 @@ class MissionController:
                 self.logger.error(f"Error in monitor loop: {e}")
                 await asyncio.sleep(1)
     
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
     async def _monitor_mission(self, mission_id: str) -> None:
         """Monitor a single mission."""
         mission_data = await self.blackboard.get_mission(mission_id)
@@ -921,6 +948,11 @@ class MissionController:
                 self.logger.error(f"Error in watchdog loop: {e}")
                 await asyncio.sleep(5)
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         self.logger.info("🐕 Task Watchdog stopped")
     
     async def _check_zombie_tasks(self, mission_id: str) -> None:
@@ -996,6 +1028,11 @@ class MissionController:
         except Exception as e:
             self.logger.error(f"Error checking zombie tasks: {e}")
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     # ═══════════════════════════════════════════════════════════
     # Utility Methods
     # ═══════════════════════════════════════════════════════════
@@ -1041,6 +1078,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to connect ApprovalStore to Redis: {e}. Using in-memory fallback.")
     
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
     async def request_approval(
         self,
         mission_id: str,
@@ -1077,6 +1119,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to persist approval {action_id} to Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Update mission status to waiting
         await self.blackboard.update_mission_status(mission_id, MissionStatus.WAITING_FOR_APPROVAL)
         
@@ -1141,6 +1188,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to get approval from Redis: {e}")
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         if not action:
             self.logger.error(f"Action {action_id} not found in pending approvals")
             return False
@@ -1171,6 +1223,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to update approval in Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Resume mission
         await self.blackboard.update_mission_status(mission_id, MissionStatus.RUNNING)
         
@@ -1236,6 +1293,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to get approval from Redis: {e}")
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         if not action:
             self.logger.error(f"Action {action_id} not found in pending approvals")
             return False
@@ -1268,6 +1330,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to update approval in Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Publish rejection response
         response_event = ApprovalResponseEvent(
             mission_id=UUID(mission_id),
@@ -1330,6 +1397,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to get pending approvals from Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         return pending
     
     def _approval_to_dict(self, action: ApprovalAction) -> Dict[str, Any]:
@@ -1372,6 +1444,11 @@ class MissionController:
             )
             return {"pending": pending_count, "completed": 0, "approved": 0, "rejected": 0, "expired": 0}
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     async def _resume_approved_task(self, mission_id: str, action: ApprovalAction) -> None:
         """
         Resume a task that was waiting for approval.
@@ -1484,6 +1561,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to persist chat message to Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Publish chat event
         event = ChatEvent(
             mission_id=UUID(mission_id),
@@ -1513,6 +1595,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to persist response to Redis: {e}")
             
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
             # Publish response event via Blackboard Pub/Sub
             response_event = ChatEvent(
                 mission_id=UUID(mission_id),
@@ -1544,6 +1631,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to broadcast chat message via WebSocket: {e}")
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         # Return AI response if available, otherwise return user message
         # HTTP response serves as fallback when WebSocket is not available
         return response if response else message
@@ -1582,6 +1674,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to get chat history from Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Fallback to in-memory history
         history = self._chat_history.get(mission_id, [])
         return [
@@ -1662,12 +1759,22 @@ class MissionController:
                 except Exception as e:
                     self.logger.warning(f"Failed to broadcast plan: {e}")
             
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
             return response_message
             
         except Exception as e:
             self.logger.error(f"Agent processing error: {e}", exc_info=True)
             return None
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     async def _get_hacker_agent_for_mission(self, mission_id: str):
         """
         Get or create HackerAgent instance for mission.
@@ -1699,6 +1806,11 @@ class MissionController:
                 self.logger.error(f"Failed to create HackerAgent: {e}")
                 return None
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         return self._mission_agents.get(mission_id)
     
     async def _prepare_vm_on_first_message(self, mission_id: str) -> bool:
@@ -1752,6 +1864,11 @@ class MissionController:
                 except Exception as e:
                     self.logger.warning(f"Failed to broadcast VM prep status: {e}")
                 
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
                 # Provision VM (async - don't wait)
                 # In production, this would call environment_manager.provision_vm()
                 # For now, we'll simulate with a placeholder
@@ -1766,6 +1883,11 @@ class MissionController:
             self.logger.error(f"Failed to auto-prepare VM: {e}", exc_info=True)
             return False
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     async def _build_agent_context(self, mission_id: str):
         """
         Build AgentContext with mission state for agent processing.
@@ -1854,6 +1976,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Agent processing failed, falling back to simple mode: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # ═══════════════════════════════════════════════════════════════
         # SHELL ACCESS & COMMAND EXECUTION DETECTION
         # ═══════════════════════════════════════════════════════════════
@@ -1920,6 +2047,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to broadcast shell ready: {e}")
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         # Handle command execution request
         elif is_run_request and extracted_command:
             # Execute the command via terminal_routes
@@ -1976,6 +2108,11 @@ class MissionController:
                 self.logger.error(f"Command execution error: {e}")
                 response_content = f"❌ Failed to execute command: {str(e)}"
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         # Check for simple commands (fast path)
         elif "status" in content:
             status = await self.get_mission_status(mission_id)
@@ -2078,6 +2215,11 @@ class MissionController:
                 self.logger.error(f"Environment check error: {e}")
                 response_content = "❌ Error checking environment status. Please try again."
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         elif "help" in content or "مساعدة" in content:
             response_content = (
                 "📖 **RAGLOX Agent Commands:**\n\n"
@@ -2221,6 +2363,11 @@ class MissionController:
                                             except Exception as e:
                                                 self.logger.error(f"Failed to create environment on-the-fly: {e}")
                                         
+                                                raise handle_exception_gracefully(
+                                                    e,
+                                                    context='Mission operation',
+                                                    logger=self.logger
+                                                )
                                         # ═══════════════════════════════════════════════════
                                         # Case 2: VM not created yet - trigger lazy provisioning
                                         # ═══════════════════════════════════════════════════
@@ -2243,6 +2390,11 @@ class MissionController:
                                             except Exception as e:
                                                 self.logger.error(f"Failed to update VM status: {e}")
                                             
+                                                raise handle_exception_gracefully(
+                                                    e,
+                                                    context='Mission operation',
+                                                    logger=self.logger
+                                                )
                                             # Start provisioning (non-blocking)
                                             try:
                                                 asyncio.create_task(provision_user_vm(
@@ -2255,6 +2407,11 @@ class MissionController:
                                             except Exception as e:
                                                 self.logger.error(f"Failed to start provisioning task: {e}")
                                             
+                                                raise handle_exception_gracefully(
+                                                    e,
+                                                    context='Mission operation',
+                                                    logger=self.logger
+                                                )
                                             self.logger.info(f"VM provisioning started for user {user_id_str}")
                                         
                                         # ═══════════════════════════════════════════════════
@@ -2317,6 +2474,11 @@ class MissionController:
                                                 except Exception as e:
                                                     self.logger.error(f"Failed to wake up VM: {e}")
                                 
+                                                    raise handle_exception_gracefully(
+                                                        e,
+                                                        context='Mission operation',
+                                                        logger=self.logger
+                                                    )
                                 if user_environments:
                                     # Use the first available connected environment
                                     agent_env = None
@@ -2368,6 +2530,11 @@ class MissionController:
                     self.logger.error(f"Environment execution error: {env_error}")
                     # Fall through to simulation mode
             
+                    raise handle_exception_gracefully(
+                        env_error,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
             # ═══════════════════════════════════════════════════════════════
             # NO EXECUTION AVAILABLE: Return clear error with VM status
             # ═══════════════════════════════════════════════════════════════
@@ -2533,6 +2700,11 @@ class MissionController:
                 except Exception as e:
                     self.logger.warning(f"Failed to broadcast AI plan: {e}")
             
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
             # Broadcast terminal output for commands executed
             if response.commands_executed:
                 try:
@@ -2548,6 +2720,11 @@ class MissionController:
                 except Exception as e:
                     self.logger.warning(f"Failed to broadcast terminal output: {e}")
             
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
             if response.content:
                 return response.content
             else:
@@ -2560,6 +2737,11 @@ class MissionController:
             self.logger.error(f"Agent error: {e}", exc_info=True)
             return await self._get_simple_llm_response(mission_id, user_message)
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     async def _build_agent_context(self, mission_id: str) -> "AgentContext":
         """Build AgentContext from mission data."""
         from ..core.agent.base import AgentContext
@@ -2594,6 +2776,11 @@ class MissionController:
                 except Exception as e:
                     self.logger.warning(f"Could not get VM info: {e}")
         
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
         # Get mission data
         targets = []
         vulnerabilities = []
@@ -2635,6 +2822,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Error getting mission data for context: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Get chat history
         chat_history = []
         history = self._chat_history.get(mission_id, [])
@@ -2722,6 +2914,11 @@ Available commands the user can use:
             self.logger.error(f"LLM error: {e}")
             return f"🤖 Received your message: '{user_message}'. Use 'help' to see available commands."
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     async def shutdown(self) -> None:
         """
         ═══════════════════════════════════════════════════════════════
