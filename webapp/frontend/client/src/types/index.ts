@@ -170,11 +170,13 @@ export interface ChatMessage {
   related_action_id?: string;
   // Command execution context (for terminal integration)
   command?: string;
-  output?: string[];
+  output?: string | string[];
   // Optimistic update status
-  status?: "pending" | "sending" | "sent" | "failed" | "streaming" | "complete";
+  status?: "pending" | "sending" | "sent" | "failed" | "streaming" | "complete" | "error";
   // Temporary ID for optimistic updates (will be replaced by server ID)
   tempId?: string;
+  // Optimistic flag
+  isOptimistic?: boolean;
   // Error message if failed
   error?: string;
 }
