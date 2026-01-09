@@ -470,6 +470,15 @@ export interface VMConfiguration {
   os: string;
 }
 
+// VM Status for real-time capability level tracking
+export interface VMStatus {
+  status: "not_created" | "creating" | "ready" | "error" | "unknown";
+  progress?: number;
+  message?: string;
+  vm_id?: string;
+  ip?: string;
+}
+
 export interface RegisterRequest {
   email: string;
   password: string;

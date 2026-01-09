@@ -5,7 +5,8 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useLocation } from "wouter";
-import { DualPanelLayout } from "@/components/manus";
+import { DualPanelLayout, CapabilityLevelDisplay } from "@/components/manus";
+import type { VMStatus } from "@/types";
 import { useMissionStore } from "@/stores/missionStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { hitlApi, chatApi, missionApi, terminalApi, ApiError } from "@/lib/api";
@@ -107,6 +108,10 @@ export default function Operations() {
   // Command history for playback
   const [commandHistory, setCommandHistory] = useState<CommandHistoryEntry[]>([]);
 
+  // Capability level state for clear UX
+  const [capabilityLevel, setCapabilityLevel] = useState<0 | 1 | 2 | 3>(1);
+  const [vmStatus, setVMStatus] = useState<VMStatus | undefined>();
+  
   // Load mission data on mount
   useEffect(() => {
     if (missionId) {
@@ -248,6 +253,35 @@ export default function Operations() {
       clearError();
     }
   }, [storeError, clearError]);
+
+  // Calculate capability level based on system state
+  useEffect(() => {
+    const calculateLevel = () => {
+      // Level 0: Offline
+      if (!isConnected && !isPolling) {
+        setCapabilityLevel(0);
+        return;
+      }
+      
+      // Level 1: Connected but no mission
+      if (!mission || mission.status === "created") {
+        setCapabilityLevel(1);
+        return;
+      }
+      
+      // Check VM status for Level 2 vs 3
+      // For now, default to Level 2 (simulation) until VM status API is available
+      // TODO: Integrate with VM status API
+      setCapabilityLevel(2);
+      
+      // Level 3 would be: VM ready and mission running
+      // if (vmStatus?.status === "ready") {
+      //   setCapabilityLevel(3);
+      // }
+    };
+    
+    calculateLevel();
+  }, [isConnected, isPolling, mission]);
 
   // ============================================
   // Mission Control Handlers
@@ -635,31 +669,12 @@ export default function Operations() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Connection Status */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs ${isConnected
-                  ? "bg-green-500/10 text-green-500"
-                  : isPolling
-                    ? "bg-yellow-500/10 text-yellow-500"
-                    : "bg-red-500/10 text-red-500"
-                }`}>
-                {isConnected ? (
-                  <Wifi className="w-3 h-3" />
-                ) : (
-                  <WifiOff className="w-3 h-3" />
-                )}
-                <span>{isConnected ? "Live" : isPolling ? "Polling" : "Offline"}</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isConnected
-                ? "Connected via WebSocket (real-time)"
-                : isPolling
-                  ? `Polling every ${POLLING_INTERVAL / 1000}s`
-                  : "Disconnected from server"}
-            </TooltipContent>
-          </Tooltip>
+          {/* Capability Level Indicator - Shows execution mode clearly */}
+          <CapabilityLevelDisplay
+            isConnected={isConnected}
+            missionStatus={mission?.status}
+            vmStatus={vmStatus}
+          />
 
           {/* Refresh Button */}
           <Tooltip>
