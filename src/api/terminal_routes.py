@@ -422,7 +422,7 @@ async def execute_command(
     except Exception as e:
         pass  # WebSocket broadcast is best-effort
     
-    # Try to execute command
+    # Try to execute command via real environment
     output_lines = []
     exit_code = 0
     cmd_status = "success"
@@ -430,103 +430,99 @@ async def execute_command(
     # Check if we have SSH connection for this mission
     if ssh_manager and environment_manager:
         try:
-            # Try to get the environment/VM for this mission
-            # This is a simplified implementation - in production you'd look up the VM
+            # Try to get the environment/VM for this mission and execute real command
+            # This uses the SSHCommandExecutor for actual execution
+            from ..infrastructure.orchestrator.agent_executor import AgentExecutor
             
-            # For now, simulate command execution with useful output
-            # In production, this would use the SSHCommandExecutor
+            # Get user environments
+            mission_data = None
+            user_environments = []
             
-            # Check if it's a common command we can simulate meaningfully
-            if command.startswith("ls"):
-                output_lines = [
-                    f"$ {command}",
-                    "total 24",
-                    "drwxr-xr-x  4 root root 4096 Jan  6 12:00 .",
-                    "drwxr-xr-x 10 root root 4096 Jan  6 12:00 ..",
-                    "-rw-r--r--  1 root root 1024 Jan  6 12:00 config.txt",
-                    "-rwxr-xr-x  1 root root 2048 Jan  6 12:00 start.sh",
-                    "drwxr-xr-x  2 root root 4096 Jan  6 12:00 logs",
-                    "drwxr-xr-x  2 root root 4096 Jan  6 12:00 data"
-                ]
-            elif command.startswith("pwd"):
-                output_lines = [f"$ {command}", "/home/ubuntu/mission"]
-            elif command.startswith("whoami"):
-                output_lines = [f"$ {command}", "ubuntu"]
-            elif command.startswith("id"):
-                output_lines = [f"$ {command}", "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),27(sudo)"]
-            elif command.startswith("uname"):
-                output_lines = [f"$ {command}", "Linux raglox-sandbox 5.15.0-91-generic #101-Ubuntu SMP x86_64 GNU/Linux"]
-            elif command.startswith("df"):
-                output_lines = [
-                    f"$ {command}",
-                    "Filesystem     1K-blocks    Used Available Use% Mounted on",
-                    "/dev/sda1       50000000 5000000  45000000  10% /",
-                    "/dev/sda2       20000000 1000000  19000000   5% /home"
-                ]
-            elif command.startswith("nmap"):
-                output_lines = [
-                    f"$ {command}",
-                    "Starting Nmap 7.94 ( https://nmap.org )",
-                    "Nmap scan report for target",
-                    "Host is up (0.0010s latency).",
-                    "PORT     STATE SERVICE    VERSION",
-                    "22/tcp   open  ssh        OpenSSH 8.4p1",
-                    "80/tcp   open  http       Apache httpd 2.4.51",
-                    "443/tcp  open  https      nginx 1.21.6",
-                    "Nmap done: 1 IP address (1 host up) scanned"
-                ]
-            elif command.startswith("cat"):
-                output_lines = [
-                    f"$ {command}",
-                    "# Configuration File",
-                    "hostname=target-server",
-                    "ip=192.168.1.100",
-                    "services=ssh,http,https"
-                ]
-            elif command.startswith("ps"):
-                output_lines = [
-                    f"$ {command}",
-                    "  PID TTY          TIME CMD",
-                    "    1 ?        00:00:02 systemd",
-                    " 1024 ?        00:00:00 sshd",
-                    " 1025 ?        00:00:01 apache2",
-                    " 1026 ?        00:00:00 nginx"
-                ]
-            elif command.startswith("netstat") or command.startswith("ss"):
-                output_lines = [
-                    f"$ {command}",
-                    "Proto Recv-Q Send-Q Local Address    Foreign Address  State",
-                    "tcp   0      0      0.0.0.0:22       0.0.0.0:*        LISTEN",
-                    "tcp   0      0      0.0.0.0:80       0.0.0.0:*        LISTEN",
-                    "tcp   0      0      0.0.0.0:443      0.0.0.0:*        LISTEN"
-                ]
+            try:
+                from ..controller.blackboard import get_blackboard
+                blackboard = await get_blackboard()
+                mission_data = await blackboard.get_mission(mission_id)
+                
+                if mission_data:
+                    user_id = mission_data.get("created_by")
+                    if user_id:
+                        user_environments = await environment_manager.list_user_environments(str(user_id))
+            except Exception:
+                pass
+            
+            # Find a connected environment
+            agent_env = None
+            for env in user_environments:
+                if env.status.value in ["connected", "ready"]:
+                    agent_env = env
+                    break
+            
+            if agent_env and agent_env.ssh_manager and agent_env.connection_id:
+                # Execute via real SSH
+                executor = AgentExecutor()
+                task_id = f"cmd-{mission_id[:8]}-{int(time.time() * 1000)}"
+                
+                result = await executor.execute_command(
+                    environment=agent_env,
+                    command=command,
+                    task_id=task_id,
+                    timeout=timeout
+                )
+                
+                if result.status == "success":
+                    output_lines = [f"$ {command}"] + (result.stdout.split('\n') if result.stdout else [])
+                    exit_code = result.exit_code
+                    cmd_status = "success"
+                else:
+                    error_output = result.stderr or result.stdout or "Command failed"
+                    output_lines = [f"$ {command}"] + error_output.split('\n')
+                    exit_code = result.exit_code
+                    cmd_status = "error"
             else:
-                # Generic command response
+                # No connected environment - return clear error
                 output_lines = [
                     f"$ {command}",
-                    f"Command executed successfully in simulation mode.",
-                    f"Note: For real execution, connect a target VM to this mission."
+                    "",
+                    "❌ Execution Environment Not Connected",
+                    "",
+                    "No active execution environment is available for this mission.",
+                    "",
+                    "📋 To enable command execution:",
+                    "   1. Ensure your VM environment is provisioned",
+                    "   2. Check that the environment is in 'ready' status",
+                    "   3. Verify SSH connectivity to the environment",
+                    "",
+                    "💡 Use the chat to ask the agent about environment status.",
+                    "",
+                    f"Command queued: {command}"
                 ]
+                exit_code = 126
+                cmd_status = "unavailable"
             
         except Exception as e:
-            output_lines = [f"$ {command}", f"Error: {str(e)}"]
+            output_lines = [f"$ {command}", "", f"❌ Execution Error: {str(e)}"]
             exit_code = 1
             cmd_status = "error"
     else:
-        # No SSH manager - provide helpful message
+        # No SSH manager or environment manager - return clear error
         output_lines = [
             f"$ {command}",
             "",
-            "[!] Shell access not available.",
+            "❌ Shell Access Not Available",
             "",
-            "To enable shell access:",
-            "1. Ensure SSH is enabled in settings",
-            "2. Create and start a mission with a valid target",
-            "3. Wait for VM provisioning to complete",
+            "The execution environment is not configured for this server.",
             "",
-            "Currently running in simulation mode."
+            "📋 Possible reasons:",
+            "   • Server is starting up",
+            "   • Environment manager not initialized",
+            "   • Configuration error",
+            "",
+            "Please wait a moment and try again, or contact support.",
+            "",
+            f"Command: {command}"
         ]
-        cmd_status = "simulated"
+        exit_code = 126
+        cmd_status = "unavailable"
     
     duration_ms = int((time.time() - start_time) * 1000)
     
