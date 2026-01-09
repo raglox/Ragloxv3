@@ -12,3 +12,5 @@ export { PlanView, PlanBadge } from "./PlanView";
 export { FilePreview, FileBadge } from "./FilePreview";
 export { SuggestedActions, SuggestionPills } from "./SuggestedActions";
 export type { SuggestedAction } from "./SuggestedActions";
+export { CapabilityIndicator, CapabilityLevelDisplay } from "./CapabilityIndicator";
+export type { CapabilityLevel, VMStatus } from "./CapabilityIndicator";

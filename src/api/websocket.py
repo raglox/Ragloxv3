@@ -1,15 +1,20 @@
 # ═══════════════════════════════════════════════════════════════
 # RAGLOX v3.0 - WebSocket Handler
 # Real-time updates for mission events
+# Secure token transmission via subprotocol (GAP-002 fix)
 # ═══════════════════════════════════════════════════════════════
 
 import asyncio
 import json
-from typing import Any, Dict, List, Set
+import logging
+from typing import Any, Dict, List, Set, Optional, Tuple
 from datetime import datetime
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, status
 from starlette.websockets import WebSocketState
+
+
+logger = logging.getLogger("raglox.websocket")
 
 
 websocket_router = APIRouter()
@@ -31,10 +36,18 @@ class ConnectionManager:
     async def connect(
         self,
         websocket: WebSocket,
-        mission_id: str = None
+        mission_id: str = None,
+        already_accepted: bool = False
     ) -> None:
-        """Accept a new WebSocket connection."""
-        await websocket.accept()
+        """Add a WebSocket connection to the manager.
+        
+        Args:
+            websocket: The WebSocket connection
+            mission_id: Optional mission ID to scope the connection
+            already_accepted: If True, don't call accept() (already done)
+        """
+        if not already_accepted:
+            await websocket.accept()
         
         if mission_id:
             if mission_id not in self._active_connections:
@@ -104,20 +117,180 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+# ═══════════════════════════════════════════════════════════════
+# WebSocket Authentication (GAP-002: Token via Subprotocol)
+# ═══════════════════════════════════════════════════════════════
+
+async def verify_websocket_token(websocket: WebSocket) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Verify WebSocket authentication token.
+    
+    Token transmission methods (in priority order):
+    1. Subprotocol: 'access_token.{JWT}' (RECOMMENDED - secure)
+    2. Query string: '?token={JWT}' (DEPRECATED - for backward compatibility)
+    
+    Returns:
+        Tuple of (is_valid, user_dict, selected_subprotocol)
+    """
+    from .auth_routes import decode_token, get_token_store
+    
+    token: Optional[str] = None
+    selected_subprotocol: Optional[str] = None
+    
+    # Method 1: Check subprotocols for token (SECURE)
+    # Client sends: new WebSocket(url, ['access_token.{JWT}'])
+    subprotocols = websocket.scope.get("subprotocols", [])
+    for protocol in subprotocols:
+        if protocol.startswith("access_token."):
+            token = protocol.replace("access_token.", "", 1)
+            selected_subprotocol = protocol
+            logger.debug("Token received via subprotocol (secure)")
+            break
+    
+    # Method 2: Fallback to query string (DEPRECATED)
+    # For backward compatibility during migration
+    if not token:
+        query_params = dict(websocket.query_params)
+        if "token" in query_params:
+            token = query_params["token"]
+            logger.warning("Token received via query string (deprecated - please migrate to subprotocol)")
+    
+    # No token found - allow anonymous connection for public endpoints
+    if not token:
+        logger.debug("No token provided - anonymous WebSocket connection")
+        return True, None, None
+    
+    # Validate token
+    try:
+        # Decode JWT
+        payload = decode_token(token, raise_on_error=False)
+        if not payload:
+            logger.warning("Invalid or expired WebSocket token")
+            return False, None, selected_subprotocol
+        
+        # Validate token in Redis store (check if revoked)
+        token_store = get_token_store()
+        if token_store:
+            stored_user_id = await token_store.validate_token(token)
+            if not stored_user_id:
+                logger.warning("WebSocket token has been revoked")
+                return False, None, selected_subprotocol
+        
+        # Build user dict
+        user = {
+            "id": payload.get("sub"),
+            "organization_id": payload.get("org"),
+            "token_exp": payload.get("exp"),
+        }
+        
+        logger.info(f"WebSocket authenticated for user {user['id']}")
+        return True, user, selected_subprotocol
+        
+    except Exception as e:
+        logger.error(f"WebSocket token verification failed: {e}")
+        return False, None, selected_subprotocol
+
+
+async def accept_websocket_with_auth(
+    websocket: WebSocket,
+    require_auth: bool = False
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Accept WebSocket connection with optional authentication.
+    
+    Per RFC 6455, we MUST accept the WebSocket connection first (with the
+    requested subprotocol) before we can send any messages or close codes.
+    Otherwise, browsers won't receive the Sec-WebSocket-Protocol header.
+    
+    Args:
+        websocket: The WebSocket connection
+        require_auth: If True, reject unauthenticated connections
+        
+    Returns:
+        Tuple of (success, user_dict)
+    """
+    # Log incoming subprotocols for debugging
+    client_subprotocols = websocket.scope.get("subprotocols", [])
+    logger.info(f"WebSocket connection attempt - client subprotocols: {len(client_subprotocols)} protocols")
+    
+    is_valid, user, selected_subprotocol = await verify_websocket_token(websocket)
+    
+    logger.info(f"Token verification result: is_valid={is_valid}, user_exists={user is not None}, subprotocol_selected={selected_subprotocol is not None}")
+    
+    # ALWAYS accept first with the selected subprotocol (if any)
+    # This ensures the Sec-WebSocket-Protocol header is sent to the client
+    try:
+        if selected_subprotocol:
+            logger.info(f"Accepting WebSocket with subprotocol: {selected_subprotocol[:50]}...")
+            await websocket.accept(subprotocol=selected_subprotocol)
+        else:
+            logger.debug("Accepting WebSocket without subprotocol")
+            await websocket.accept()
+    except Exception as e:
+        logger.error(f"Failed to accept WebSocket: {e}")
+        return False, None
+    
+    # Now check authentication after accepting
+    if not is_valid:
+        # Send error message before closing
+        logger.warning("WebSocket auth failed - sending error and closing with 4001")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "code": 4001,
+                "message": "Authentication failed: Invalid or expired token",
+                "timestamp": datetime.utcnow().isoformat()
+            })
+        except Exception:
+            pass
+        await websocket.close(code=4001, reason="Authentication failed")
+        return False, None
+    
+    if require_auth and not user:
+        # Send error message before closing
+        logger.warning("WebSocket auth required but no user - sending error and closing with 4003")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "code": 4003,
+                "message": "Authentication required: Please provide a valid token",
+                "timestamp": datetime.utcnow().isoformat()
+            })
+        except Exception:
+            pass
+        await websocket.close(code=4003, reason="Authentication required")
+        return False, None
+    
+    logger.info("WebSocket accepted and authenticated successfully")
+    return True, user
+
+
 @websocket_router.websocket("/ws")
 async def global_websocket(websocket: WebSocket):
     """
     Global WebSocket endpoint for all events.
     
     Receives all mission events.
+    
+    Authentication:
+    - Optional for global endpoint
+    - Token via subprotocol: new WebSocket(url, ['access_token.{JWT}'])
     """
-    await manager.connect(websocket)
+    # Authenticate (optional for global endpoint)
+    success, user = await accept_websocket_with_auth(websocket, require_auth=False)
+    if not success:
+        return
+    
+    # Connection already accepted by accept_websocket_with_auth
+    await manager.connect(websocket, already_accepted=True)
     
     try:
-        # Send welcome message
+        # Send welcome message with auth status
         await websocket.send_json({
             "type": "connected",
             "message": "Connected to RAGLOX v3.0",
+            "authenticated": user is not None,
+            "user_id": user["id"] if user else None,
             "timestamp": datetime.utcnow().isoformat()
         })
         
@@ -155,6 +328,10 @@ async def mission_websocket(
     
     Receives events only for the specified mission.
     
+    Authentication:
+    - REQUIRED for mission-specific endpoint
+    - Token via subprotocol: new WebSocket(url, ['access_token.{JWT}'])
+    
     Events:
     - new_target: New target discovered
     - new_vuln: New vulnerability found
@@ -163,15 +340,31 @@ async def mission_websocket(
     - goal_achieved: Mission goal achieved
     - status_change: Mission status changed
     - statistics: Stats update
+    - terminal_command_start: Command execution started
+    - terminal_output_line: Real-time output line
+    - terminal_command_complete: Command execution completed
+    - terminal_command_error: Command execution error
     """
-    await manager.connect(websocket, mission_id)
+    # Authenticate (REQUIRED for mission endpoint)
+    success, user = await accept_websocket_with_auth(websocket, require_auth=True)
+    if not success:
+        return
+    
+    # TODO: Verify user has access to this mission
+    # This would require checking mission ownership in the database
+    # For now, authentication is sufficient
+    
+    # Connection already accepted by accept_websocket_with_auth
+    await manager.connect(websocket, mission_id, already_accepted=True)
     
     try:
-        # Send welcome message
+        # Send welcome message with auth info
         await websocket.send_json({
             "type": "connected",
             "mission_id": mission_id,
             "message": f"Connected to mission {mission_id}",
+            "authenticated": True,
+            "user_id": user["id"] if user else None,
             "timestamp": datetime.utcnow().isoformat()
         })
         
@@ -518,17 +711,183 @@ async def broadcast_terminal_output(
         exit_code: Exit code if command completed
         status: Command status (running, completed, error)
     """
-    await manager.broadcast_to_mission(mission_id, {
-        "type": "terminal_output",
-        "mission_id": mission_id,
-        "data": {
-            "command": command,
-            "output": output,
-            "exit_code": exit_code,
-            "status": status
-        },
-        "timestamp": datetime.utcnow().isoformat()
-    })
+    import logging
+    logger = logging.getLogger("raglox.websocket")
+    
+    try:
+        await manager.broadcast_to_mission(mission_id, {
+            "type": "terminal_output",
+            "mission_id": mission_id,
+            "data": {
+                "command": command,
+                "output": output,
+                "exit_code": exit_code,
+                "status": status
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Failed to broadcast terminal_output: {e}")
+        # Store event for polling clients as fallback
+        await _store_terminal_event_for_polling(mission_id, command, output, exit_code, status)
+
+
+async def broadcast_terminal_command_start(
+    mission_id: str,
+    command: str,
+    command_id: str = None
+) -> None:
+    """
+    Broadcast terminal command start event.
+    
+    Called when a command begins execution to show the user
+    that their command has been received and is starting.
+    """
+    import logging
+    logger = logging.getLogger("raglox.websocket")
+    
+    try:
+        await manager.broadcast_to_mission(mission_id, {
+            "type": "terminal_command_start",
+            "mission_id": mission_id,
+            "data": {
+                "command": command,
+                "command_id": command_id
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Failed to broadcast terminal_command_start: {e}")
+
+
+async def broadcast_terminal_output_line(
+    mission_id: str,
+    line: str,
+    command_id: str = None,
+    is_simulation: bool = False
+) -> None:
+    """
+    Broadcast a single line of terminal output in real-time.
+    
+    This enables streaming output - each line is sent as soon as
+    it's available, giving users immediate feedback.
+    """
+    import logging
+    logger = logging.getLogger("raglox.websocket")
+    
+    try:
+        await manager.broadcast_to_mission(mission_id, {
+            "type": "terminal_output_line",
+            "mission_id": mission_id,
+            "data": {
+                "line": line,
+                "command_id": command_id,
+                "simulation": is_simulation
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Failed to broadcast terminal_output_line: {e}")
+
+
+async def broadcast_terminal_command_complete(
+    mission_id: str,
+    command: str,
+    exit_code: int,
+    command_id: str = None,
+    duration_ms: int = None
+) -> None:
+    """
+    Broadcast terminal command completion event.
+    
+    Called when a command finishes execution (success or failure).
+    """
+    import logging
+    logger = logging.getLogger("raglox.websocket")
+    
+    try:
+        await manager.broadcast_to_mission(mission_id, {
+            "type": "terminal_command_complete",
+            "mission_id": mission_id,
+            "data": {
+                "command": command,
+                "command_id": command_id,
+                "exit_code": exit_code,
+                "duration_ms": duration_ms
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Failed to broadcast terminal_command_complete: {e}")
+
+
+async def broadcast_terminal_command_error(
+    mission_id: str,
+    command: str,
+    error: str,
+    command_id: str = None
+) -> None:
+    """
+    Broadcast terminal command error event.
+    
+    Called when a command fails due to an error.
+    """
+    import logging
+    logger = logging.getLogger("raglox.websocket")
+    
+    try:
+        await manager.broadcast_to_mission(mission_id, {
+            "type": "terminal_command_error",
+            "mission_id": mission_id,
+            "data": {
+                "command": command,
+                "command_id": command_id,
+                "error": error
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Failed to broadcast terminal_command_error: {e}")
+
+
+async def _store_terminal_event_for_polling(
+    mission_id: str,
+    command: str = None,
+    output: str = None,
+    exit_code: int = None,
+    status: str = None
+) -> None:
+    """
+    Store terminal event in Redis for polling clients.
+    
+    This is a fallback mechanism when WebSocket broadcast fails.
+    Polling clients can retrieve these events via HTTP endpoint.
+    """
+    import logging
+    logger = logging.getLogger("raglox.websocket")
+    
+    try:
+        # Lazy import to avoid circular dependency
+        from ..core.blackboard import get_blackboard
+        import json
+        
+        blackboard = await get_blackboard()
+        if blackboard and hasattr(blackboard, 'redis_client'):
+            key = f"mission:{mission_id}:terminal_events"
+            event = {
+                "type": "terminal_output",
+                "command": command,
+                "output": output,
+                "exit_code": exit_code,
+                "status": status,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            await blackboard.redis_client.lpush(key, json.dumps(event))
+            await blackboard.redis_client.ltrim(key, 0, 99)  # Keep last 100 events
+            await blackboard.redis_client.expire(key, 3600)  # 1 hour TTL
+            logger.debug(f"Stored terminal event for polling: {mission_id}")
+    except Exception as e:
+        logger.warning(f"Failed to store terminal event for polling: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════

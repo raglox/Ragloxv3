@@ -5,7 +5,8 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useLocation } from "wouter";
-import { DualPanelLayout } from "@/components/manus";
+import { DualPanelLayout, CapabilityLevelDisplay } from "@/components/manus";
+import type { VMStatus } from "@/types";
 import { useMissionStore } from "@/stores/missionStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { hitlApi, chatApi, missionApi, terminalApi, ApiError } from "@/lib/api";
@@ -107,6 +108,10 @@ export default function Operations() {
   // Command history for playback
   const [commandHistory, setCommandHistory] = useState<CommandHistoryEntry[]>([]);
 
+  // Capability level state for clear UX
+  const [capabilityLevel, setCapabilityLevel] = useState<0 | 1 | 2 | 3>(1);
+  const [vmStatus, setVMStatus] = useState<VMStatus | undefined>();
+  
   // Load mission data on mount
   useEffect(() => {
     if (missionId) {
@@ -249,6 +254,35 @@ export default function Operations() {
     }
   }, [storeError, clearError]);
 
+  // Calculate capability level based on system state
+  useEffect(() => {
+    const calculateLevel = () => {
+      // Level 0: Offline
+      if (!isConnected && !isPolling) {
+        setCapabilityLevel(0);
+        return;
+      }
+      
+      // Level 1: Connected but no mission
+      if (!mission || mission.status === "created") {
+        setCapabilityLevel(1);
+        return;
+      }
+      
+      // Check VM status for Level 2 vs 3
+      // For now, default to Level 2 (simulation) until VM status API is available
+      // TODO: Integrate with VM status API
+      setCapabilityLevel(2);
+      
+      // Level 3 would be: VM ready and mission running
+      // if (vmStatus?.status === "ready") {
+      //   setCapabilityLevel(3);
+      // }
+    };
+    
+    calculateLevel();
+  }, [isConnected, isPolling, mission]);
+
   // ============================================
   // Mission Control Handlers
   // ============================================
@@ -300,6 +334,9 @@ export default function Operations() {
   // - HTTP POST: Send message & get immediate response (fallback)
   // - WebSocket: Receive real-time AI responses (primary)
   // Enhanced with Optimistic Updates (Manus/Lovable-style)
+  // FIX: Track processed response IDs to prevent duplicates
+  const processedResponseIds = useRef<Set<string>>(new Set());
+  
   const handleSendMessage = useCallback(async (content: string) => {
     // Generate temporary ID for optimistic update
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -338,33 +375,53 @@ export default function Operations() {
       // Handle response based on role:
       // - "system": AI response received via HTTP (fallback when WebSocket unavailable)
       // - "user": Just acknowledgment, WebSocket will deliver AI response
-      if (response.role === "system") {
-        // Check if this message already exists (from WebSocket)
-        setChatMessages((prev) => {
-          const exists = prev.some(m => m.id === response.id);
-          if (exists) {
-            // WebSocket already delivered this message
-            return prev;
+      // FIX: Only add HTTP response when WebSocket is NOT connected (prevents duplicates)
+      // When WebSocket is connected, the AI response comes through the WebSocket channel
+      if (response.role === "system" && !isConnected) {
+        // Deduplicate: Check if we've already processed this response ID
+        if (response.id && processedResponseIds.current.has(response.id)) {
+          console.log("[Chat] Skipping duplicate response (already processed):", response.id);
+        } else {
+          // Track this response ID
+          if (response.id) {
+            processedResponseIds.current.add(response.id);
+            // Prevent memory growth - keep only last 100 IDs
+            if (processedResponseIds.current.size > 200) {
+              const entries = Array.from(processedResponseIds.current);
+              processedResponseIds.current = new Set(entries.slice(-100));
+            }
           }
-          // Add AI response (HTTP fallback)
-          return [...prev, response];
-        });
+          
+          // Check if this message already exists in state (from WebSocket)
+          setChatMessages((prev) => {
+            const exists = prev.some(m => m.id === response.id);
+            if (exists) {
+              console.log("[Chat] Message already in state, skipping:", response.id);
+              return prev;
+            }
+            console.log("[Chat] Adding HTTP response (WebSocket disconnected):", response.id);
+            return [...prev, response];
+          });
 
-        // Add to events for activity feed (only if not duplicate)
-        addEvent({
-          id: `event-${Date.now()}`,
-          type: "chat_message",
-          title: response.command ? `Command: ${response.command}` : "Message from assistant",
-          description: response.content,
-          timestamp: response.timestamp,
-          status: "completed",
-          data: response,
-          command: response.command,  // Pass command for terminal integration
-          output: response.output?.join("\n"),  // Pass output for terminal
-          expanded: false,
-        });
+          // Add to events for activity feed
+          addEvent({
+            id: `event-${Date.now()}`,
+            type: "chat_message",
+            title: response.command ? `Command: ${response.command}` : "Message from assistant",
+            description: response.content,
+            timestamp: response.timestamp,
+            status: "completed",
+            data: response,
+            command: response.command,  // Pass command for terminal integration
+            output: response.output?.join("\n"),  // Pass output for terminal
+            expanded: false,
+          });
+        }
+      } else if (response.role === "system" && isConnected) {
+        // WebSocket is connected - response will come through WebSocket, skip HTTP response
+        console.log("[Chat] WebSocket connected, HTTP response will be ignored:", response.id);
       }
-      // If response.role === "user", just acknowledge - WebSocket handles AI response
+      // If response.role === "user", it's just acknowledgment - WebSocket handles AI response
     } catch (error) {
       console.error("[Operations] Failed to send message:", error);
 
@@ -413,7 +470,7 @@ export default function Operations() {
         description: errorDescription,
       });
     }
-  }, [missionId, addEvent]);
+  }, [missionId, addEvent, isConnected]);
 
   // Handle command click (show in terminal)
   const handleCommandClick = useCallback((command: string) => {
@@ -635,31 +692,12 @@ export default function Operations() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Connection Status */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs ${isConnected
-                  ? "bg-green-500/10 text-green-500"
-                  : isPolling
-                    ? "bg-yellow-500/10 text-yellow-500"
-                    : "bg-red-500/10 text-red-500"
-                }`}>
-                {isConnected ? (
-                  <Wifi className="w-3 h-3" />
-                ) : (
-                  <WifiOff className="w-3 h-3" />
-                )}
-                <span>{isConnected ? "Live" : isPolling ? "Polling" : "Offline"}</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isConnected
-                ? "Connected via WebSocket (real-time)"
-                : isPolling
-                  ? `Polling every ${POLLING_INTERVAL / 1000}s`
-                  : "Disconnected from server"}
-            </TooltipContent>
-          </Tooltip>
+          {/* Capability Level Indicator - Shows execution mode clearly */}
+          <CapabilityLevelDisplay
+            isConnected={isConnected}
+            missionStatus={mission?.status}
+            vmStatus={vmStatus}
+          />
 
           {/* Refresh Button */}
           <Tooltip>

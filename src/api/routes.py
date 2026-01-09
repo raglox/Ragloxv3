@@ -13,11 +13,16 @@ Security Features:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+import time
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+import asyncio
+import json
 
 from ..core.models import (
     MissionCreate, MissionStatus, MissionStats, Mission,
@@ -36,6 +41,142 @@ from .auth_routes import get_current_user
 
 logger = logging.getLogger("raglox.api.routes")
 router = APIRouter(tags=["Missions"])
+
+
+# ═══════════════════════════════════════════════════════════════
+# Rate Limiting Implementation
+# ═══════════════════════════════════════════════════════════════
+
+class RateLimiter:
+    """
+    Simple in-memory rate limiter for API endpoints.
+    
+    Implements a sliding window rate limiting strategy.
+    Configured per endpoint with customizable limits.
+    """
+    
+    def __init__(self):
+        # user_id -> list of timestamps
+        self._requests: Dict[str, List[float]] = defaultdict(list)
+        # Cleanup old entries periodically
+        self._last_cleanup = time.time()
+        self._cleanup_interval = 60  # seconds
+    
+    def _cleanup_old_entries(self, window_seconds: int = 60):
+        """Remove old entries to prevent memory growth."""
+        current_time = time.time()
+        
+        # Only cleanup periodically
+        if current_time - self._last_cleanup < self._cleanup_interval:
+            return
+        
+        cutoff = current_time - window_seconds
+        keys_to_delete = []
+        
+        for key, timestamps in self._requests.items():
+            # Filter out old timestamps
+            self._requests[key] = [ts for ts in timestamps if ts > cutoff]
+            if not self._requests[key]:
+                keys_to_delete.append(key)
+        
+        # Delete empty keys
+        for key in keys_to_delete:
+            del self._requests[key]
+        
+        self._last_cleanup = current_time
+    
+    def check_rate_limit(
+        self,
+        user_id: str,
+        max_requests: int = 20,
+        window_seconds: int = 60
+    ) -> Tuple[bool, int]:
+        """
+        Check if user has exceeded rate limit.
+        
+        Args:
+            user_id: Unique identifier for the user
+            max_requests: Maximum allowed requests in window
+            window_seconds: Time window in seconds
+            
+        Returns:
+            Tuple of (is_allowed, remaining_requests)
+        """
+        self._cleanup_old_entries(window_seconds)
+        
+        current_time = time.time()
+        cutoff = current_time - window_seconds
+        
+        # Get recent requests for this user
+        user_requests = self._requests[user_id]
+        
+        # Filter to only include requests within window
+        recent_requests = [ts for ts in user_requests if ts > cutoff]
+        self._requests[user_id] = recent_requests
+        
+        # Check if limit exceeded
+        request_count = len(recent_requests)
+        remaining = max(0, max_requests - request_count)
+        
+        if request_count >= max_requests:
+            return False, 0
+        
+        # Record this request
+        self._requests[user_id].append(current_time)
+        
+        return True, remaining - 1
+
+
+# Global rate limiter instance
+_rate_limiter = RateLimiter()
+
+
+# Rate limit configurations per endpoint
+RATE_LIMITS = {
+    "chat": {"max_requests": 20, "window_seconds": 60},  # 20 messages per minute
+    "execute": {"max_requests": 10, "window_seconds": 60},  # 10 commands per minute
+    "approval": {"max_requests": 30, "window_seconds": 60},  # 30 approval actions per minute
+}
+
+
+async def check_rate_limit(
+    user_id: str,
+    endpoint: str = "default",
+    custom_max: int = None,
+    custom_window: int = None
+):
+    """
+    Check rate limit for a user on a specific endpoint.
+    
+    Raises HTTPException 429 if rate limit exceeded.
+    """
+    config = RATE_LIMITS.get(endpoint, {"max_requests": 60, "window_seconds": 60})
+    
+    max_requests = custom_max or config["max_requests"]
+    window_seconds = custom_window or config["window_seconds"]
+    
+    is_allowed, remaining = _rate_limiter.check_rate_limit(
+        user_id=f"{user_id}:{endpoint}",
+        max_requests=max_requests,
+        window_seconds=window_seconds
+    )
+    
+    if not is_allowed:
+        logger.warning(
+            f"Rate limit exceeded for user {user_id} on endpoint {endpoint}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Maximum {max_requests} requests per {window_seconds} seconds. "
+                   f"Please wait before making more requests.",
+            headers={
+                "X-RateLimit-Limit": str(max_requests),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(time.time()) + window_seconds)
+            }
+        )
+    
+    return remaining
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -198,6 +339,13 @@ class RejectionRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request model for chat messages."""
+    content: str = Field(..., min_length=1, max_length=4096, description="Message content")
+    related_task_id: Optional[str] = Field(None, description="Related task ID")
+    related_action_id: Optional[str] = Field(None, description="Related approval action ID")
+
+
+class StreamingChatRequest(BaseModel):
+    """Request model for streaming chat messages."""
     content: str = Field(..., min_length=1, max_length=4096, description="Message content")
     related_task_id: Optional[str] = Field(None, description="Related task ID")
     related_action_id: Optional[str] = Field(None, description="Related approval action ID")
@@ -1027,7 +1175,9 @@ async def send_chat_message(
     - Ask about mission status
     - Give instructions (pause, resume)
     - Query pending approvals
+    - Execute commands on target environment
     
+    Rate limited to 20 messages per minute.
     Requires authentication. Only accessible if mission belongs to user's organization.
     
     - **content**: Message content
@@ -1042,6 +1192,11 @@ async def send_chat_message(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e)
         )
+    
+    # Rate limiting - 20 messages per minute
+    user_id = current_user.get("id")
+    remaining = await check_rate_limit(user_id, "chat")
+    logger.debug(f"Chat rate limit check: user {user_id}, remaining {remaining}")
     
     organization_id = current_user.get("organization_id")
     
@@ -1111,6 +1266,176 @@ async def get_chat_history(
     
     history = await controller.get_chat_history(mission_id, limit)
     return [ChatMessageResponse(**msg) for msg in history]
+
+
+# ═══════════════════════════════════════════════════════════════
+# AI Response Streaming (SSE)
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/missions/{mission_id}/chat/stream")
+async def stream_chat_response(
+    mission_id: str,
+    request_data: StreamingChatRequest,
+    request: Request,
+    controller: MissionController = Depends(get_controller),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Stream AI response using Server-Sent Events (SSE).
+    
+    This endpoint provides real-time streaming of AI responses,
+    similar to ChatGPT's typing effect. Each token/chunk is sent
+    as soon as it's generated, providing immediate feedback.
+    
+    Rate limited to 20 messages per minute.
+    Requires authentication. Only accessible if mission belongs to user's organization.
+    
+    SSE Event Types:
+    - start: Response generation started (includes message_id)
+    - chunk: A piece of the response text
+    - command: A command to be executed (if applicable)
+    - terminal_start: Terminal command execution started
+    - terminal_output: Terminal output line
+    - terminal_complete: Terminal command completed
+    - end: Response generation complete
+    - error: An error occurred
+    
+    Example client usage (JavaScript):
+    ```javascript
+    const response = await fetch('/api/v1/missions/{id}/chat/stream', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer {token}'
+        },
+        body: JSON.stringify({ content: 'run nmap scan' })
+    });
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\\n\\n');
+        
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const data = JSON.parse(line.slice(6));
+                // Handle data.type: 'start', 'chunk', 'end', 'error'
+            }
+        }
+    }
+    ```
+    """
+    # Validate UUID format first
+    try:
+        validate_uuid(mission_id, "mission_id")
+    except InvalidUUIDError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e)
+        )
+    
+    # Rate limiting - 20 messages per minute
+    user_id = current_user.get("id")
+    remaining = await check_rate_limit(user_id, "chat")
+    logger.debug(f"Streaming chat rate limit check: user {user_id}, remaining {remaining}")
+    
+    organization_id = current_user.get("organization_id")
+    
+    # Verify ownership
+    await verify_mission_ownership(mission_id, organization_id, controller)
+    
+    async def generate_sse_stream():
+        """
+        Generate Server-Sent Events stream.
+        
+        Yields SSE-formatted events for real-time AI response streaming.
+        """
+        import uuid
+        from datetime import datetime
+        
+        message_id = str(uuid.uuid4())
+        
+        try:
+            # Send start event
+            yield f"data: {json.dumps({'type': 'start', 'message_id': message_id, 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+            
+            # Check if controller supports streaming
+            if hasattr(controller, 'stream_chat_response'):
+                # Use streaming method if available
+                async for chunk in controller.stream_chat_response(
+                    mission_id=mission_id,
+                    content=request_data.content,
+                    user_id=user_id,
+                    related_task_id=request_data.related_task_id,
+                    related_action_id=request_data.related_action_id
+                ):
+                    # Chunk can be:
+                    # - {"type": "text", "content": "..."} - AI text response
+                    # - {"type": "command", "command": "..."} - Command to execute
+                    # - {"type": "terminal_start", "command": "..."} - Terminal execution starting
+                    # - {"type": "terminal_output", "line": "..."} - Terminal output
+                    # - {"type": "terminal_complete", "exit_code": 0} - Terminal done
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    await asyncio.sleep(0)  # Allow other tasks to run
+            else:
+                # Fallback: Non-streaming response with simulated streaming
+                logger.info("Controller does not support streaming, using fallback")
+                
+                # Get full response
+                message = await controller.send_chat_message(
+                    mission_id=mission_id,
+                    content=request_data.content,
+                    related_task_id=request_data.related_task_id,
+                    related_action_id=request_data.related_action_id
+                )
+                
+                # Stream the response word by word for typing effect
+                content = message.content
+                words = content.split(' ')
+                
+                for i, word in enumerate(words):
+                    chunk_text = word + (' ' if i < len(words) - 1 else '')
+                    yield f"data: {json.dumps({'type': 'chunk', 'content': chunk_text})}\n\n"
+                    await asyncio.sleep(0.02)  # 20ms delay between words
+                
+                # If there's terminal output, stream it
+                if message.command:
+                    yield f"data: {json.dumps({'type': 'command', 'command': message.command})}\n\n"
+                    
+                    if message.output:
+                        yield f"data: {json.dumps({'type': 'terminal_start', 'command': message.command})}\n\n"
+                        for line in message.output:
+                            yield f"data: {json.dumps({'type': 'terminal_output', 'line': line})}\n\n"
+                            await asyncio.sleep(0.01)  # Small delay between lines
+                        yield f"data: {json.dumps({'type': 'terminal_complete', 'exit_code': 0})}\n\n"
+            
+            # Send end event
+            yield f"data: {json.dumps({'type': 'end', 'message_id': message_id, 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+            
+        except asyncio.CancelledError:
+            # Client disconnected
+            logger.info(f"SSE stream cancelled for mission {mission_id}")
+            yield f"data: {json.dumps({'type': 'cancelled', 'message_id': message_id})}\n\n"
+        except Exception as e:
+            logger.error(f"SSE streaming error for mission {mission_id}: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'message_id': message_id})}\n\n"
+    
+    return StreamingResponse(
+        generate_sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-RateLimit-Limit": str(RATE_LIMITS["chat"]["max_requests"]),
+            "X-RateLimit-Remaining": str(remaining)
+        }
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
