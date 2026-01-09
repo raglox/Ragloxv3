@@ -5,7 +5,9 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useLocation } from "wouter";
-import { DualPanelLayout, CapabilityLevelDisplay } from "@/components/manus";
+// Fix: Import directly to avoid circular dependency in barrel file
+import { DualPanelLayout } from "@/components/manus/DualPanelLayout";
+import { CapabilityLevelDisplay } from "@/components/manus/CapabilityIndicator";
 import type { VMStatus } from "@/types";
 import { useMissionStore } from "@/stores/missionStore";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -254,35 +256,6 @@ export default function Operations() {
     }
   }, [storeError, clearError]);
 
-  // Calculate capability level based on system state
-  useEffect(() => {
-    const calculateLevel = () => {
-      // Level 0: Offline
-      if (!isConnected && !isPolling) {
-        setCapabilityLevel(0);
-        return;
-      }
-      
-      // Level 1: Connected but no mission
-      if (!mission || mission.status === "created") {
-        setCapabilityLevel(1);
-        return;
-      }
-      
-      // Check VM status for Level 2 vs 3
-      // For now, default to Level 2 (simulation) until VM status API is available
-      // TODO: Integrate with VM status API
-      setCapabilityLevel(2);
-      
-      // Level 3 would be: VM ready and mission running
-      // if (vmStatus?.status === "ready") {
-      //   setCapabilityLevel(3);
-      // }
-    };
-    
-    calculateLevel();
-  }, [isConnected, isPolling, mission]);
-
   // ============================================
   // Mission Control Handlers
   // ============================================
@@ -295,6 +268,37 @@ export default function Operations() {
       });
     }
   }, [missionId, startMission]);
+
+  // Calculate capability level based on system state
+  useEffect(() => {
+    const calculateLevel = () => {
+      // Level 0: Offline
+      if (!isConnected && !isPolling) {
+        setCapabilityLevel(0);
+        return;
+      }
+      
+      // Auto-start mission logic implies we are always at least Level 2 or 3
+      // If we have a mission, we assume the environment is initializing or ready.
+      // We hide the explicit "Created" state to mimic "Always On" agents.
+      
+      if (vmStatus?.status === "ready") {
+         setCapabilityLevel(3);
+      } else {
+         setCapabilityLevel(2); // Sandbox/Provisioning
+      }
+    };
+    
+    calculateLevel();
+  }, [isConnected, isPolling, mission, vmStatus]);
+
+  // Auto-start mission if in "created" state (Enterprise Experience)
+  useEffect(() => {
+      if (mission?.status === "created" && !isControlLoading) {
+          console.log("[Operations] Auto-starting mission environment...");
+          handleStartMission();
+      }
+  }, [mission?.status, handleStartMission, isControlLoading]);
 
   const handlePauseMission = useCallback(async () => {
     const success = await pauseMission(missionId);
@@ -714,75 +718,20 @@ export default function Operations() {
             <TooltipContent>Refresh data</TooltipContent>
           </Tooltip>
 
-          {/* Mission Controls */}
+          {/* Mission Controls - HIDDEN FOR ENTERPRISE EXPERIENCE (Auto-managed) */}
+          {/* 
           <div className="flex items-center gap-1 ml-2 pl-2 border-l border-border">
-            {/* Start Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleStartMission}
-                  disabled={!canStart || isControlLoading}
-                  className="text-green-500 hover:text-green-600 hover:bg-green-500/10"
-                >
-                  {isControlLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Start Mission</TooltipContent>
-            </Tooltip>
-
-            {/* Pause Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handlePauseMission}
-                  disabled={!canPause || isControlLoading}
-                  className="text-yellow-500 hover:text-yellow-600 hover:bg-yellow-500/10"
-                >
-                  <Pause className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Pause Mission</TooltipContent>
-            </Tooltip>
-
-            {/* Resume Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleResumeMission}
-                  disabled={!canResume || isControlLoading}
-                  className="text-blue-500 hover:text-blue-600 hover:bg-blue-500/10"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Resume Mission</TooltipContent>
-            </Tooltip>
-
-            {/* Stop Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleStopMission}
-                  disabled={!canStop || isControlLoading}
-                  className="text-red-500 hover:text-red-600 hover:bg-red-500/10"
-                >
-                  <Square className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Stop Mission</TooltipContent>
-            </Tooltip>
+             ... (Start/Pause buttons removed for cleaner UX) ...
+          </div> 
+          */}
+          <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border">
+             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span className="text-xs font-medium text-green-500">Environment Active</span>
+             </div>
           </div>
         </div>
       </header>
