@@ -34,30 +34,43 @@ from .tactical_reasoning import (
     ReasoningPhase
 )
 
-# mission_intelligence will be added in Phase 4.0
-# from .mission_intelligence import (
-#     MissionIntelligenceBuilder,
-#     TargetDossier,
-#     IntelligenceBrief
+# Phase 3.0: Mission Intelligence System
+from .mission_intelligence import (
+    MissionIntelligence,
+    TargetIntel,
+    VulnerabilityIntel,
+    CredentialIntel,
+    NetworkMap,
+    AttackSurfaceAnalysis,
+    TacticRecommendation,
+    IntelConfidence,
+    AttackVectorType,
+    DefenseType,
+    create_mission_intelligence,
+)
+
+from .mission_intelligence_builder import (
+    MissionIntelligenceBuilder,
+)
+
+# TODO Phase 4.0: SpecialistOrchestrator, AttackKillChainMapper, MITREMapper
+# from .specialist_orchestrator import (
+#     SpecialistOrchestrator,
+#     CoordinationPattern,
+#     OrchestrationResult
 # )
-
-from .specialist_orchestrator import (
-    SpecialistOrchestrator,
-    CoordinationPattern,
-    OrchestrationResult
-)
-
-from .attack_kill_chain import (
-    AttackKillChainMapper,
-    KillChainPhase,
-    TacticalMapping
-)
-
-from .mitre_mapper import (
-    MITREAttackMapper,
-    Tactic,
-    Technique
-)
+#
+# from .attack_kill_chain import (
+#     AttackKillChainMapper,
+#     KillChainPhase,
+#     TacticalMapping
+# )
+#
+# from .mitre_mapper import (
+#     MITREAttackMapper,
+#     Tactic,
+#     Technique
+# )
 
 __all__ = [
     # Tactical Reasoning
@@ -66,21 +79,28 @@ __all__ = [
     "TacticalReasoning",
     "ReasoningPhase",
     
-    # Mission Intelligence
+    # Phase 3.0: Mission Intelligence
+    "MissionIntelligence",
     "MissionIntelligenceBuilder",
-    "TargetDossier",
-    "IntelligenceBrief",
+    "TargetIntel",
+    "VulnerabilityIntel",
+    "CredentialIntel",
+    "NetworkMap",
+    "AttackSurfaceAnalysis",
+    "TacticRecommendation",
+    "IntelConfidence",
+    "AttackVectorType",
+    "DefenseType",
+    "create_mission_intelligence",
     
-    # Orchestration
-    "SpecialistOrchestrator",
-    "CoordinationPattern",
-    "OrchestrationResult",
-    
-    # Attack Frameworks
-    "AttackKillChainMapper",
-    "KillChainPhase",
-    "TacticalMapping",
-    "MITREAttackMapper",
-    "Tactic",
-    "Technique",
+    # TODO Phase 4.0:
+    # "SpecialistOrchestrator",
+    # "CoordinationPattern",
+    # "OrchestrationResult",
+    # "AttackKillChainMapper",
+    # "KillChainPhase",
+    # "TacticalMapping",
+    # "MITREAttackMapper",
+    # "Tactic",
+    # "Technique",
 ]
