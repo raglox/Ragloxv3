@@ -34,11 +34,12 @@ from .tactical_reasoning import (
     ReasoningPhase
 )
 
-from .mission_intelligence import (
-    MissionIntelligenceBuilder,
-    TargetDossier,
-    IntelligenceBrief
-)
+# mission_intelligence will be added in Phase 4.0
+# from .mission_intelligence import (
+#     MissionIntelligenceBuilder,
+#     TargetDossier,
+#     IntelligenceBrief
+# )
 
 from .specialist_orchestrator import (
     SpecialistOrchestrator,

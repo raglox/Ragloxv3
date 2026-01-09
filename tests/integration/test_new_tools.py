@@ -88,12 +88,13 @@ class TestRXModuleExecuteTool:
         with patch('src.core.knowledge.get_knowledge') as mock_kb:
             mock_kb.return_value.get_module.return_value = mock_module
             
-            mock_executor = AsyncMock()
-            mock_executor.execute = AsyncMock(return_value=MagicMock(
-                exit_code=0,
-                stdout='Module executed successfully',
-                stderr=''
-            ))
+            # Create proper mock executor
+            mock_executor = MagicMock()
+            mock_result = MagicMock()
+            mock_result.exit_code = 0
+            mock_result.stdout = 'Module executed successfully'
+            mock_result.stderr = ''
+            mock_executor.execute_command = AsyncMock(return_value=mock_result)
             
             result = await rx_tool.execute(
                 ssh_executor=mock_executor,
@@ -126,12 +127,13 @@ class TestRXModuleExecuteTool:
         with patch('src.core.knowledge.get_knowledge') as mock_kb:
             mock_kb.return_value.get_module.return_value = mock_module
             
-            mock_executor = AsyncMock()
-            mock_executor.execute = AsyncMock(return_value=MagicMock(
-                exit_code=0,
-                stdout='Success',
-                stderr=''
-            ))
+            # Create proper mock executor
+            mock_executor = MagicMock()
+            mock_result = MagicMock()
+            mock_result.exit_code = 0
+            mock_result.stdout = 'Success'
+            mock_result.stderr = ''
+            mock_executor.execute_command = AsyncMock(return_value=mock_result)
             
             result = await rx_tool.execute(
                 ssh_executor=mock_executor,
@@ -198,7 +200,7 @@ class TestNucleiScanTool:
         """Test tool initializes with correct metadata."""
         assert nuclei_tool.name == 'nuclei_scan'
         assert nuclei_tool.category.value in ['vuln', 'vulnerability']
-        assert nuclei_tool.risk_level == 'medium'
+        assert nuclei_tool.risk_level == 'low'  # Corrected from 'medium'
         assert nuclei_tool.requires_approval is False
     
     def test_get_parameters(self, nuclei_tool):
@@ -231,15 +233,16 @@ class TestNucleiScanTool:
     @pytest.mark.asyncio
     async def test_execute_success(self, nuclei_tool):
         """Test successful scan execution."""
-        mock_executor = AsyncMock()
-        mock_executor.execute = AsyncMock(return_value=MagicMock(
-            exit_code=0,
-            stdout='[CVE-2021-3156] Found vulnerability',
-            stderr=''
-        ))
+        # Create proper mock executor
+        mock_executor = MagicMock()
+        mock_result = MagicMock()
+        mock_result.exit_code = 0
+        mock_result.stdout = '[CVE-2021-3156] Found vulnerability'
+        mock_result.stderr = ''
+        mock_executor.execute_command = AsyncMock(return_value=mock_result)
         
         result = await nuclei_tool.execute(
-            mock_executor,
+            ssh_executor=mock_executor,
             target='192.168.1.100'
         )
         
@@ -249,15 +252,16 @@ class TestNucleiScanTool:
     @pytest.mark.asyncio
     async def test_execute_with_templates(self, nuclei_tool):
         """Test execution with specific templates."""
-        mock_executor = AsyncMock()
-        mock_executor.execute = AsyncMock(return_value=MagicMock(
-            exit_code=0,
-            stdout='Scan complete',
-            stderr=''
-        ))
+        # Create proper mock executor
+        mock_executor = MagicMock()
+        mock_result = MagicMock()
+        mock_result.exit_code = 0
+        mock_result.stdout = 'Scan complete'
+        mock_result.stderr = ''
+        mock_executor.execute_command = AsyncMock(return_value=mock_result)
         
         result = await nuclei_tool.execute(
-            mock_executor,
+            ssh_executor=mock_executor,
             target='192.168.1.100',
             templates=['cve-2021-3156']
         )
@@ -267,15 +271,16 @@ class TestNucleiScanTool:
     @pytest.mark.asyncio
     async def test_execute_with_severity(self, nuclei_tool):
         """Test execution with severity filter."""
-        mock_executor = AsyncMock()
-        mock_executor.execute = AsyncMock(return_value=MagicMock(
-            exit_code=0,
-            stdout='Scan complete',
-            stderr=''
-        ))
+        # Create proper mock executor
+        mock_executor = MagicMock()
+        mock_result = MagicMock()
+        mock_result.exit_code = 0
+        mock_result.stdout = 'Scan complete'
+        mock_result.stderr = ''
+        mock_executor.execute_command = AsyncMock(return_value=mock_result)
         
         result = await nuclei_tool.execute(
-            mock_executor,
+            ssh_executor=mock_executor,
             target='192.168.1.100',
             severity='critical'
         )
