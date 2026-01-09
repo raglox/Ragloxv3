@@ -43,6 +43,7 @@ from .base import (
 )
 
 from .openai_provider import OpenAIProvider
+from .deepseek_provider import DeepSeekProvider, ReasoningResponse
 from .blackbox_provider import BlackboxAIProvider
 from .local_provider import LocalLLMProvider
 from .mock_provider import MockLLMProvider
@@ -84,6 +85,8 @@ __all__ = [
     
     # Providers
     "OpenAIProvider",
+    "DeepSeekProvider",
+    "ReasoningResponse",
     "BlackboxAIProvider",
     "LocalLLMProvider",
     "MockLLMProvider",

@@ -65,11 +65,18 @@ db_pool = None  # PostgreSQL connection pool
 
 
 def init_llm_service(settings) -> None:
-    """Initialize LLM service with configured provider."""
+    """
+    Initialize LLM service with configured provider.
+    
+    ═══════════════════════════════════════════════════════════════
+    PHASE 1: Added DeepSeek provider support
+    ═══════════════════════════════════════════════════════════════
+    """
     try:
         from ..core.llm import (
             LLMService, 
             get_llm_service, 
+            DeepSeekProvider,
             BlackboxAIProvider,
             OpenAIProvider,
             MockLLMProvider,
@@ -83,12 +90,41 @@ def init_llm_service(settings) -> None:
         api_key = settings.effective_llm_api_key
         provider_name = settings.llm_provider.lower()
         
-        if not api_key:
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 1: Check for DeepSeek API key first
+        # ═══════════════════════════════════════════════════════════
+        deepseek_key = getattr(settings, 'deepseek_api_key', None)
+        if not deepseek_key:
+            import os
+            deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        
+        if not api_key and not deepseek_key:
             logger.warning("No LLM API key configured - using mock provider")
             provider_name = "mock"
         
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 1: DeepSeek Provider (RECOMMENDED)
+        # ═══════════════════════════════════════════════════════════
+        if provider_name == "deepseek":
+            if not deepseek_key:
+                logger.error("DeepSeek provider selected but no API key found")
+                provider_name = "mock"
+            else:
+                config = LLMConfig(
+                    provider_type=ProviderType.OPENAI,  # Compatible API
+                    api_key=deepseek_key,
+                    api_base="https://api.deepseek.com",
+                    model=settings.llm_model or "deepseek-reasoner",
+                    temperature=settings.llm_temperature,
+                    max_tokens=settings.llm_max_tokens or 8000,
+                    timeout=settings.llm_timeout,
+                )
+                provider = DeepSeekProvider(config)
+                service.register_provider("deepseek", provider, set_as_default=True)
+                logger.info("🧠 LLM Service initialized with DeepSeek provider (REASONING MODE)")
+        
         # Configure based on provider
-        if provider_name == "blackbox":
+        elif provider_name == "blackbox":
             config = LLMConfig(
                 provider_type=ProviderType.OPENAI,  # BlackBox uses OpenAI-compatible API
                 api_key=api_key,
@@ -124,7 +160,7 @@ def init_llm_service(settings) -> None:
             logger.info("🤖 LLM Service initialized with Mock provider")
             
     except Exception as e:
-        logger.error(f"Failed to initialize LLM service: {e}")
+        logger.error(f"Failed to initialize LLM service: {e}", exc_info=True)
 
 
 @asynccontextmanager

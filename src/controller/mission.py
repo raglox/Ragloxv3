@@ -1596,6 +1596,165 @@ class MissionController:
             for msg in history[-limit:]
         ]
     
+    # ═══════════════════════════════════════════════════════════
+    # PHASE 1: HackerAgent Integration Methods
+    # ═══════════════════════════════════════════════════════════
+    
+    async def _process_with_agent(
+        self,
+        mission_id: str,
+        user_message: str
+    ) -> Optional[ChatMessage]:
+        """
+        Process chat message using HackerAgent with DeepSeek.
+        
+        This replaces the simple if/else logic with intelligent LLM-powered
+        response generation, tool selection, and execution.
+        
+        Architecture:
+            User Message → Agent Context → HackerAgent → LLM (DeepSeek)
+                         ↓
+            Tool Calls ← Agent Response ← Reasoning + Actions
+        
+        Args:
+            mission_id: Mission ID
+            user_message: User's message content
+        
+        Returns:
+            ChatMessage with agent's response, or None to fallback
+        """
+        try:
+            # 1. Get or create agent for this mission
+            agent = await self._get_hacker_agent_for_mission(mission_id)
+            if not agent:
+                self.logger.warning("HackerAgent not available, falling back")
+                return None
+            
+            # 2. Build mission context
+            context = await self._build_agent_context(mission_id)
+            
+            # 3. Process with agent
+            self.logger.info(f"🧠 Processing with HackerAgent: {user_message[:50]}...")
+            agent_response = await agent.process(user_message, context)
+            
+            if not agent_response or not agent_response.content:
+                return None
+            
+            # 4. Create chat message from agent response
+            response_message = ChatMessage(
+                mission_id=UUID(mission_id),
+                role="system",
+                content=agent_response.content,
+                command=agent_response.commands_executed[0]["command"] if agent_response.commands_executed else None,
+                output=agent_response.commands_executed[0].get("output", []) if agent_response.commands_executed else None
+            )
+            
+            # 5. Broadcast plan if available
+            if agent_response.plan_tasks:
+                try:
+                    from ..api.websocket import broadcast_ai_plan
+                    await broadcast_ai_plan(
+                        mission_id=mission_id,
+                        tasks=agent_response.plan_tasks,
+                        message="Agent executed plan",
+                        reasoning=agent_response.thinking if hasattr(agent_response, 'thinking') else ""
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast plan: {e}")
+            
+            return response_message
+            
+        except Exception as e:
+            self.logger.error(f"Agent processing error: {e}", exc_info=True)
+            return None
+    
+    async def _get_hacker_agent_for_mission(self, mission_id: str):
+        """
+        Get or create HackerAgent instance for mission.
+        
+        Lazy initialization with caching per mission.
+        """
+        # Check if we already have an agent for this mission
+        if not hasattr(self, '_mission_agents'):
+            self._mission_agents = {}
+        
+        if mission_id not in self._mission_agents:
+            try:
+                from ..core.agent.hacker_agent import HackerAgent
+                from ..core.llm.service import get_llm_service
+                
+                # Get LLM service (will use DeepSeek if configured)
+                llm_service = get_llm_service()
+                
+                # Create agent
+                agent = HackerAgent(
+                    llm_service=llm_service,
+                    logger=self.logger
+                )
+                
+                self._mission_agents[mission_id] = agent
+                self.logger.info(f"✅ Created HackerAgent for mission {mission_id}")
+                
+            except Exception as e:
+                self.logger.error(f"Failed to create HackerAgent: {e}")
+                return None
+        
+        return self._mission_agents.get(mission_id)
+    
+    async def _build_agent_context(self, mission_id: str):
+        """
+        Build AgentContext with mission state for agent processing.
+        
+        Includes:
+        - Chat history
+        - Mission goals
+        - Targets
+        - Vulnerabilities
+        - VM status
+        - Previous findings
+        """
+        from ..core.agent.base import AgentContext
+        
+        # Get mission data
+        mission = await self.blackboard.get_mission(mission_id)
+        if not mission:
+            mission = {}
+        
+        # Get chat history
+        chat_history = self._chat_history.get(mission_id, [])
+        
+        # Create context
+        context = AgentContext(
+            mission_id=mission_id,
+            chat_history=[
+                {"role": msg.role, "content": msg.content}
+                for msg in chat_history[-10:]  # Last 10 messages
+            ]
+        )
+        
+        # Add mission state
+        context.vm_status = mission.get("vm_status", "not_created")
+        context.vm_ip = mission.get("vm_ip")
+        context.ssh_connected = mission.get("ssh_connected", False)
+        
+        # Add goals
+        goals = await self.blackboard.get_mission_goals(mission_id)
+        if goals:
+            context.goals = [
+                {"name": name, "status": status}
+                for name, status in goals.items()
+            ]
+        
+        # Add targets
+        targets = mission.get("targets", [])
+        context.targets = targets
+        
+        # Add vulnerabilities
+        vulns = mission.get("vulnerabilities", [])
+        context.vulnerabilities = vulns
+        
+        return context
+    
     async def _process_chat_message(
         self,
         mission_id: str,
@@ -1604,11 +1763,25 @@ class MissionController:
         """
         Process a chat message and generate a system response.
         
-        Uses LLM for intelligent responses with fallback to simple commands.
+        ═══════════════════════════════════════════════════════════════
+        PHASE 1: HackerAgent Integration
+        ═══════════════════════════════════════════════════════════════
+        Route chat messages through HackerAgent for intelligent processing.
+        The agent uses LLM to understand context, plan actions, and execute tools.
         """
         content = message.content.lower()
         original_content = message.content
         response_content = None
+        
+        # ═══════════════════════════════════════════════════════════════
+        # PHASE 1: TRY HACKER AGENT FIRST (Intelligent Processing)
+        # ═══════════════════════════════════════════════════════════════
+        try:
+            agent_response = await self._process_with_agent(mission_id, original_content)
+            if agent_response:
+                return agent_response
+        except Exception as e:
+            self.logger.warning(f"Agent processing failed, falling back to simple mode: {e}")
         
         # ═══════════════════════════════════════════════════════════════
         # SHELL ACCESS & COMMAND EXECUTION DETECTION

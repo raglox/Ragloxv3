@@ -657,18 +657,26 @@ def reset_llm_service() -> None:
 
 async def create_default_service(
     openai_api_key: Optional[str] = None,
+    deepseek_api_key: Optional[str] = None,
     local_api_base: Optional[str] = None,
     local_model: Optional[str] = None,
     use_mock: bool = False,
+    prefer_deepseek: bool = False,
 ) -> LLMService:
     """
     Create a service with common providers configured.
     
+    ═══════════════════════════════════════════════════════════════
+    PHASE 1: Added DeepSeek provider support
+    ═══════════════════════════════════════════════════════════════
+    
     Args:
         openai_api_key: OpenAI API key (enables OpenAI provider)
+        deepseek_api_key: DeepSeek API key (enables DeepSeek provider)
         local_api_base: Local LLM API base URL (enables local provider)
         local_model: Local model name
         use_mock: Use mock provider (for testing)
+        prefer_deepseek: Set DeepSeek as default if available
         
     Returns:
         Configured LLMService
@@ -682,6 +690,26 @@ async def create_default_service(
         service.register_provider("mock", mock, priority=10, set_as_default=True)
         return service
     
+    # ═══════════════════════════════════════════════════════════
+    # PHASE 1: Register DeepSeek provider (priority 5 - highest)
+    # ═══════════════════════════════════════════════════════════
+    if deepseek_api_key:
+        from .deepseek_provider import DeepSeekProvider
+        config = LLMConfig(
+            provider_type=ProviderType.OPENAI,  # Compatible API
+            api_key=deepseek_api_key,
+            api_base="https://api.deepseek.com",
+            model="deepseek-reasoner",  # Default to reasoning model
+            temperature=0.7,
+            max_tokens=8000,
+        )
+        service.register_provider(
+            "deepseek",
+            DeepSeekProvider(config),
+            priority=5,  # Highest priority
+            set_as_default=prefer_deepseek
+        )
+    
     if openai_api_key:
         from .openai_provider import OpenAIProvider
         config = LLMConfig(
@@ -689,7 +717,13 @@ async def create_default_service(
             api_key=openai_api_key,
             model="gpt-4o-mini",
         )
-        service.register_provider("openai", OpenAIProvider(config), priority=10)
+        # OpenAI priority: 10 (fallback if DeepSeek not available)
+        service.register_provider(
+            "openai",
+            OpenAIProvider(config),
+            priority=10,
+            set_as_default=not deepseek_api_key  # Default only if no DeepSeek
+        )
     
     if local_api_base:
         from .local_provider import LocalLLMProvider

@@ -468,7 +468,17 @@ Return the plan as a JSON array of step objects.
         message: str,
         context: AgentContext
     ) -> Optional[str]:
-        """Get response from LLM"""
+        """
+        Get response from LLM with optional function calling support.
+        
+        ═══════════════════════════════════════════════════════════════
+        PHASE 1: DeepSeek Function Calling Integration
+        ═══════════════════════════════════════════════════════════════
+        
+        If DeepSeek provider is available, use tools parameter for
+        native function calling. Otherwise, fall back to JSON tool calls
+        in the response text.
+        """
         llm = await self._get_llm_service()
         if not llm:
             return None
@@ -488,6 +498,38 @@ Return the plan as a JSON array of step objects.
                 LLMMessage(role=MessageRole.USER, content=message)
             ]
             
+            # ═══════════════════════════════════════════════════════════
+            # PHASE 1: Try DeepSeek with function calling
+            # ═══════════════════════════════════════════════════════════
+            if hasattr(llm, 'generate_with_tools'):
+                # Get tools schema for function calling
+                tools_schema = self._build_tools_schema()
+                
+                try:
+                    response = await llm.generate_with_tools(
+                        messages=messages,
+                        tools=tools_schema,
+                        tool_choice="auto"  # Let LLM decide
+                    )
+                    
+                    # Check if LLM wants to call a tool
+                    if response and response.raw_response:
+                        tool_calls = response.raw_response.get("choices", [{}])[0].get("message", {}).get("tool_calls")
+                        
+                        if tool_calls:
+                            # Return the full response with tool_calls for processing
+                            return response
+                    
+                    # No tool calls, return regular content
+                    if response and response.content:
+                        return response.content
+                        
+                except Exception as e:
+                    self.logger.warning(f"Function calling failed, falling back to text mode: {e}")
+            
+            # ═══════════════════════════════════════════════════════════
+            # Fallback: Standard text generation (original behavior)
+            # ═══════════════════════════════════════════════════════════
             response = await llm.generate(messages)
             
             if response and response.content:
@@ -497,6 +539,37 @@ Return the plan as a JSON array of step objects.
             self.logger.error(f"LLM error: {e}")
         
         return None
+    
+    def _build_tools_schema(self) -> List[Dict[str, Any]]:
+        """
+        Build OpenAI-compatible tools schema for function calling.
+        
+        Converts BaseTool definitions to OpenAI function format:
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_name",
+                "description": "Tool description",
+                "parameters": {...}
+            }
+        }
+        
+        Returns:
+            List of tool schemas
+        """
+        tools = []
+        
+        for tool in self.tool_registry.get_all_tools():
+            # Get tool schema (already in OpenAI format from BaseTool.get_schema())
+            schema = tool.get_schema()
+            
+            # Wrap in OpenAI tools format
+            tools.append({
+                "type": "function",
+                "function": schema
+            })
+        
+        return tools
     
     async def _stream_llm_response(
         self,
@@ -573,19 +646,91 @@ Return the plan as a JSON array of step objects.
     
     async def _process_llm_response(
         self,
-        response: str,
+        response,  # Can be str or LLMResponse with tool_calls
         context: AgentContext
     ) -> Dict[str, Any]:
-        """Process LLM response, executing any tool calls"""
+        """
+        Process LLM response, executing any tool calls.
+        
+        ═══════════════════════════════════════════════════════════════
+        PHASE 1: Support both native function calling and JSON tool calls
+        ═══════════════════════════════════════════════════════════════
+        
+        Handles:
+        1. Native OpenAI/DeepSeek function calling (tool_calls in response)
+        2. JSON tool calls embedded in text (legacy format)
+        """
         result = {
-            "content": response,
+            "content": "",
             "tools_used": [],
             "commands": [],
             "plan_tasks": []
         }
         
-        # Look for tool calls in the response
-        tool_calls = self._extract_all_tool_calls(response)
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 1: Check for native function calling (DeepSeek/OpenAI)
+        # ═══════════════════════════════════════════════════════════
+        if not isinstance(response, str) and hasattr(response, 'raw_response'):
+            # This is an LLMResponse object with potential tool_calls
+            tool_calls_data = None
+            
+            if response.raw_response:
+                choices = response.raw_response.get("choices", [])
+                if choices:
+                    message = choices[0].get("message", {})
+                    tool_calls_data = message.get("tool_calls")
+            
+            if tool_calls_data:
+                # Process native function calling
+                result["content"] = response.content or "Executing tools..."
+                
+                for tool_call in tool_calls_data:
+                    # Extract function name and arguments
+                    function_data = tool_call.get("function", {})
+                    tool_name = function_data.get("name")
+                    
+                    try:
+                        tool_args = json.loads(function_data.get("arguments", "{}"))
+                    except json.JSONDecodeError:
+                        tool_args = {}
+                    
+                    if not tool_name:
+                        continue
+                    
+                    result["tools_used"].append(tool_name)
+                    
+                    # Execute the tool
+                    self.logger.info(f"🔧 Executing tool via function calling: {tool_name}")
+                    tool_result = await self._execute_tool(tool_name, tool_args)
+                    
+                    if tool_result.command:
+                        result["commands"].append({
+                            "command": tool_result.command,
+                            "exit_code": tool_result.exit_code,
+                            "success": tool_result.success,
+                            "output": tool_result.output
+                        })
+                    
+                    # Append tool result to content
+                    if tool_result.success:
+                        result["content"] += f"\n\n**Tool Output ({tool_name}):**\n```\n{tool_result.output[:1500]}\n```"
+                        if tool_result.summary:
+                            result["content"] += f"\n\n**Summary:** {tool_result.summary}"
+                    else:
+                        result["content"] += f"\n\n**Tool Error ({tool_name}):**\n{tool_result.error}"
+                
+                return result
+            else:
+                # No tool calls, just return the content
+                response = response.content or ""
+        
+        # ═══════════════════════════════════════════════════════════
+        # Legacy: JSON tool calls in text (fallback mode)
+        # ═══════════════════════════════════════════════════════════
+        result["content"] = response if isinstance(response, str) else str(response)
+        
+        # Look for tool calls in the response text
+        tool_calls = self._extract_all_tool_calls(result["content"])
         
         if tool_calls:
             # Process each tool call
@@ -596,6 +741,7 @@ Return the plan as a JSON array of step objects.
                 result["tools_used"].append(tool_name)
                 
                 # Execute the tool
+                self.logger.info(f"🔧 Executing tool via JSON: {tool_name}")
                 tool_result = await self._execute_tool(tool_name, tool_args)
                 
                 if tool_result.command:
