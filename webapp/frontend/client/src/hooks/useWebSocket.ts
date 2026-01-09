@@ -114,6 +114,8 @@ export function useWebSocket(
   const [newSessions, setNewSessions] = useState<Session[]>([]);
   const [newApprovals, setNewApprovals] = useState<ApprovalRequest[]>([]);
   const [newChatMessages, setNewChatMessages] = useState<ChatMessage[]>([]);
+  const wsPingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const WS_PING_INTERVAL_MS = 30000;
 
   // Refs
   const wsClientRef = useRef<WebSocketClient | null>(null);
@@ -414,9 +416,22 @@ export function useWebSocket(
 
     setStatus("connecting");
     wsClientRef.current.connect();
+    
+    // Start heartbeat
+    if (wsPingIntervalRef.current) clearInterval(wsPingIntervalRef.current);
+    wsPingIntervalRef.current = setInterval(() => {
+        if (wsClientRef.current?.isConnected) {
+            wsClientRef.current.send({ type: 'ping', timestamp: new Date().toISOString() });
+        }
+    }, WS_PING_INTERVAL_MS);
+
   }, [missionId, autoReconnect, maxReconnectAttempts, reconnectDelay, handleMessage, onConnect, onDisconnect, onError]);
 
   const disconnect = useCallback(() => {
+    if (wsPingIntervalRef.current) {
+        clearInterval(wsPingIntervalRef.current);
+        wsPingIntervalRef.current = null;
+    }
     if (wsClientRef.current) {
       wsClientRef.current.disconnect();
       wsClientRef.current = null;

@@ -1,21 +1,8 @@
-// RAGLOX v3.0 - AI Chat Panel Component (Manus-style exact)
-// Main chat interface with inline events, knowledge badges, and command pills
-// Updated for real-time WebSocket integration
-// INPUT BOX TRANSITION: Centered initially, moves to bottom after first message
-
 import { useState, useRef, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Send,
   Plus,
   Mic,
-  Smile,
-  Github,
-  Shield,
-  Target,
-  Terminal,
-  ChevronDown,
-  ChevronUp,
   Brain,
   Check,
   Circle,
@@ -23,19 +10,19 @@ import {
   Monitor,
   Sparkles,
   ArrowDown,
-  Wifi,
-  WifiOff,
-  FileText,
-  Zap
+  Terminal,
+  ChevronDown,
+  ChevronUp,
+  Target,
+  Shield
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ChatMessage, EventCard as EventCardType, PlanTask, KnowledgeItem, ApprovalRequest, AIPlanData, ConnectionStatus } from "@/types";
+import type { ChatMessage, EventCard as EventCardType, PlanTask, ConnectionStatus } from "@/types";
 import { ApprovalCard } from "./ApprovalCard";
 import { AIPlanCard } from "./AIPlanCard";
 import { CredentialCard, SessionCard, VulnerabilityCard, TargetCard } from "./ArtifactCard";
+import RichMessage from "../chat/RichMessage";
+import { useAutoScroll } from "../../hooks/useAutoScroll";
 
 interface AIChatPanelProps {
   messages: ChatMessage[];
@@ -51,9 +38,7 @@ interface AIChatPanelProps {
   terminalLastCommand?: string;
   terminalPreviewLines?: string[];
   className?: string;
-  // Demo mode flag - when true, shows demo data if no real data available
   showDemoData?: boolean;
-  // Typing indicator - shows when AI is generating response
   isAITyping?: boolean;
 }
 
@@ -68,28 +53,22 @@ export function AIChatPanel({
   onReject,
   isConnected = false,
   connectionStatus = "disconnected",
-  terminalLastCommand,
-  terminalPreviewLines = [],
   className,
-  showDemoData = false,
   isAITyping = false,
 }: AIChatPanelProps) {
   const [inputValue, setInputValue] = useState("");
   const [isPlanExpanded, setIsPlanExpanded] = useState(false);
   const [collapsedEvents, setCollapsedEvents] = useState<Set<string>>(new Set());
   const [expandedKnowledge, setExpandedKnowledge] = useState<Set<string>>(new Set());
-  const [isSending, setIsSending] = useState(false);  // Track if message is being sent
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isSending, setIsSending] = useState(false);
+  
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Check if conversation has started (has messages or events)
+  // Auto-scroll integration
+  const { containerRef, showScrollButton, scrollToBottom, handleScroll } = useAutoScroll([messages, events, isAITyping]);
+
   const hasConversationStarted = useMemo(() => {
     return messages.length > 0 || events.length > 0;
-  }, [messages, events]);
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, events]);
 
   // Auto-resize textarea
@@ -102,11 +81,10 @@ export function AIChatPanel({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputValue.trim() && !isSending && !isAITyping) {
+    if (inputValue.trim() && !isSending) {
       setIsSending(true);
       onSendMessage(inputValue.trim());
       setInputValue("");
-      // Reset after a delay (will be cleared by parent's message update)
       setTimeout(() => setIsSending(false), 1000);
     }
   };
@@ -121,11 +99,8 @@ export function AIChatPanel({
   const toggleEvent = (eventId: string) => {
     setCollapsedEvents(prev => {
       const next = new Set(prev);
-      if (next.has(eventId)) {
-        next.delete(eventId);
-      } else {
-        next.add(eventId);
-      }
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
       return next;
     });
   };
@@ -133,127 +108,65 @@ export function AIChatPanel({
   const toggleKnowledge = (knowledgeId: string) => {
     setExpandedKnowledge(prev => {
       const next = new Set(prev);
-      if (next.has(knowledgeId)) {
-        next.delete(knowledgeId);
-      } else {
-        next.add(knowledgeId);
-      }
+      if (next.has(knowledgeId)) next.delete(knowledgeId);
+      else next.add(knowledgeId);
       return next;
     });
   };
 
-  // Use real events only - no demo data to avoid confusion
-  const displayEvents: EventCardType[] = useMemo(() => {
-    return events;
-  }, [events]);
-
-  // Use real plan tasks if available
-  const actualPlanTasks: PlanTask[] = useMemo(() => {
-    if (planTasks.length > 0) {
-      return planTasks;
-    }
-
-    // Empty array if no real data
-    return [];
-  }, [planTasks]);
-  const completedTasks = actualPlanTasks.filter(t => t.status === "completed").length;
-  const totalTasks = actualPlanTasks.length;
+  // Plan progress
+  const completedTasks = planTasks.filter(t => t.status === "completed").length;
+  const totalTasks = planTasks.length;
   const progress = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
-  const hasActivePlan = actualPlanTasks.length > 0;
+  const hasActivePlan = planTasks.length > 0;
 
-  // ============================================
-  // INITIAL STATE - Input in Center (Manus-style)
-  // ============================================
+  // Initial State (Centered)
   if (!hasConversationStarted) {
     return (
-      <div className={cn("flex flex-col h-full overflow-hidden", className)} style={{ backgroundColor: '#1a1a1a' }}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-foreground">RAGLOX 3.0</span>
-            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <div className="flex items-center gap-2">
-            <ConnectionStatusIndicator connectionStatus={connectionStatus} />
-          </div>
-        </div>
-
-        {/* Centered Content - Welcome Screen with Input */}
+      <div className={cn("flex flex-col h-full overflow-hidden bg-[#1a1a1a]", className)}>
+        <Header connectionStatus={connectionStatus} isConnected={isConnected} />
+        
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <div className="w-full max-w-[600px] text-center">
-            {/* Welcome Title */}
             <motion.h1 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="text-4xl font-semibold mb-4"
-              style={{ color: '#e8e8e8' }}
+              className="text-4xl font-semibold mb-4 text-[#e8e8e8]"
             >
               What can I do for you?
             </motion.h1>
             
-            {/* Subtitle */}
             <motion.p 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              className="text-lg mb-8"
-              style={{ color: '#888888' }}
+              transition={{ delay: 0.1 }}
+              className="text-lg mb-8 text-[#888888]"
             >
               Give RAGLOX a task to work on...
             </motion.p>
 
-            {/* Centered Input Box */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
+              transition={{ delay: 0.2 }}
               className="mb-6"
             >
               <form onSubmit={handleSubmit}>
-                <div
-                  className="chat-input chat-input-centered"
-                  style={{ 
-                    boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
-                    border: '1px solid rgba(255,255,255,0.1)'
-                  }}
-                >
-                  {/* Plus Button */}
-                  <button
-                    type="button"
-                    className="chat-input-btn"
-                    title="Add attachment"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-
-                  {/* Text Input */}
+                <div className="chat-input chat-input-centered" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  <button type="button" className="chat-input-btn"><Plus className="w-4 h-4" /></button>
                   <textarea
                     ref={inputRef}
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder={isSending || isAITyping ? "Please wait..." : "Describe your security task..."}
+                    placeholder={isSending ? "Please wait..." : "Describe your security task..."}
                     className="chat-input-field min-h-[40px] max-h-[200px] py-2"
                     rows={1}
-                    disabled={isSending || isAITyping || !isConnected}
+                    disabled={isSending || !isConnected}
                   />
-
-                  {/* Right Icons */}
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      type="button"
-                      className="chat-input-btn"
-                      title="Voice input"
-                    >
-                      <Mic className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="submit"
-                      className={cn("chat-input-send", inputValue.trim() && "active")}
-                      disabled={!inputValue.trim()}
-                      title="Send"
-                    >
+                    <button type="button" className="chat-input-btn"><Mic className="w-4 h-4" /></button>
+                    <button type="submit" className={cn("chat-input-send", inputValue.trim() && "active")} disabled={!inputValue.trim()}>
                       <ArrowDown className="w-4 h-4 rotate-180" />
                     </button>
                   </div>
@@ -261,38 +174,12 @@ export function AIChatPanel({
               </form>
             </motion.div>
 
-            {/* Quick Actions - Grid Layout */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.3 }}
+              transition={{ delay: 0.3 }}
             >
               <InitialQuickActions onAction={onSendMessage} />
-            </motion.div>
-
-            {/* Connection Status */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5, delay: 0.4 }}
-              className="mt-8 flex items-center justify-center gap-2"
-            >
-              {isConnected ? (
-                <>
-                  <div className="w-2 h-2 rounded-full bg-green-500" />
-                  <span className="text-xs text-green-500">Connected to backend</span>
-                </>
-              ) : connectionStatus === "connecting" ? (
-                <>
-                  <Loader2 className="w-3 h-3 animate-spin text-yellow-500" />
-                  <span className="text-xs text-yellow-500">Connecting...</span>
-                </>
-              ) : (
-                <>
-                  <div className="w-2 h-2 rounded-full bg-yellow-500" />
-                  <span className="text-xs text-yellow-500">Ready to connect</span>
-                </>
-              )}
             </motion.div>
           </div>
         </div>
@@ -300,316 +187,121 @@ export function AIChatPanel({
     );
   }
 
-  // ============================================
-  // ACTIVE STATE - Input at Bottom (After conversation starts)
-  // ============================================
+  // Active State
   return (
-    <div className={cn("flex flex-col h-full overflow-hidden", className)} style={{ backgroundColor: '#1a1a1a' }}>
-      {/* Chat Header - Manus style */}
-      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-foreground">RAGLOX 3.0</span>
-          <ChevronDown className="w-4 h-4 text-muted-foreground" />
-        </div>
-        <div className="flex items-center gap-2">
-          <ConnectionStatusIndicator connectionStatus={connectionStatus} />
-        </div>
-      </div>
+    <div className={cn("flex flex-col h-full overflow-hidden bg-[#1a1a1a]", className)}>
+      <Header connectionStatus={connectionStatus} isConnected={isConnected} />
 
-      {/* Chat Messages Area - Content centered within available space */}
-      <ScrollArea className="flex-1 min-h-0">
+      {/* Messages Area */}
+      <div 
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto min-h-0 scroll-smooth"
+      >
         <div className="flex justify-center w-full py-6 pb-40 px-6">
-          <div className="w-full max-w-[800px]">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              {/* Agent Header */}
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: 'rgba(74, 158, 255, 0.15)' }}>
-                  <Brain className="w-4 h-4" style={{ color: '#4a9eff' }} />
-                </div>
-                <span className="font-semibold" style={{ color: '#e8e8e8', fontSize: '16px' }}>RAGLOX</span>
-                <span className="agent-badge">v3.0</span>
+          <div className="w-full max-w-[800px] flex flex-col gap-6">
+            
+            {/* Agent Header */}
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-full flex items-center justify-center bg-[#4a9eff]/15">
+                <Brain className="w-4 h-4 text-[#4a9eff]" />
               </div>
-
-              {/* Chat Messages with Status Indicators */}
-              {messages.map((message) => (
-                <ChatMessageItem key={message.id || message.tempId} message={message} />
-              ))}
-
-              {/* AI Typing Indicator */}
-              {isAITyping && (
-                <TypingIndicator />
-              )}
-
-              {/* Event Cards */}
-              {displayEvents.map((event) => {
-                // HITL Approval Card
-                if (event.type === "approval_request" && event.approval) {
-                  return (
-                    <ApprovalCard
-                      key={event.id}
-                      approval={event.approval}
-                      onApprove={(actionId, comment) => onApprove?.(actionId, comment)}
-                      onReject={(actionId, reason, comment) => onReject?.(actionId, reason, comment)}
-                    />
-                  );
-                }
-
-                // AI-PLAN Card
-                if (event.type === "ai_plan" && event.aiPlan) {
-                  return (
-                    <AIPlanCard
-                      key={event.id}
-                      data={event.aiPlan}
-                    />
-                  );
-                }
-
-                // Artifact Cards
-                if (event.type === "artifact" && event.artifact) {
-                  return (
-                    <div key={event.id} className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-success/20 flex items-center justify-center">
-                          <Check className="w-3 h-3 text-success" />
-                        </div>
-                        <span className="font-medium text-foreground">{event.title}</span>
-                      </div>
-                      {event.description && (
-                        <p className="text-muted-foreground text-sm pl-7">{event.description}</p>
-                      )}
-                      <div className="pl-7">
-                        {event.artifact.type === "credential" && event.artifact.credential && (
-                          <CredentialCard credential={event.artifact.credential} />
-                        )}
-                        {event.artifact.type === "session" && event.artifact.session && (
-                          <SessionCard session={event.artifact.session} />
-                        )}
-                        {event.artifact.type === "vulnerability" && event.artifact.vulnerability && (
-                          <VulnerabilityCard vulnerability={event.artifact.vulnerability} />
-                        )}
-                        {event.artifact.type === "target" && event.artifact.target && (
-                          <TargetCard target={event.artifact.target} />
-                        )}
-                      </div>
-                    </div>
-                  );
-                }
-
-                // Regular Event Card
-                return (
-                  <EventItem
-                    key={event.id}
-                    event={event}
-                    isExpanded={!collapsedEvents.has(event.id)}
-                    onToggle={() => toggleEvent(event.id)}
-                    expandedKnowledge={expandedKnowledge}
-                    onToggleKnowledge={toggleKnowledge}
-                    onCommandClick={(cmd) => {
-                      onCommandClick?.(cmd);
-                      onExpandTerminal?.();
-                    }}
-                    onTerminalClick={onExpandTerminal}
-                  />
-                );
-              })}
-
-              <div ref={messagesEndRef} />
+              <span className="font-semibold text-[#e8e8e8] text-base">RAGLOX</span>
+              <span className="agent-badge">v3.0</span>
             </div>
+
+            {/* Messages & Events */}
+            {messages.map((message) => (
+              <ChatMessageItem key={message.id || message.timestamp} message={message} />
+            ))}
+
+            {isAITyping && <TypingIndicator />}
+
+            {events.map((event) => (
+               <EventItemWrapper 
+                  key={event.id}
+                  event={event}
+                  isExpanded={!collapsedEvents.has(event.id)}
+                  onToggle={() => toggleEvent(event.id)}
+                  expandedKnowledge={expandedKnowledge}
+                  onToggleKnowledge={toggleKnowledge}
+                  onCommandClick={onCommandClick}
+                  onExpandTerminal={onExpandTerminal}
+                  onApprove={onApprove}
+                  onReject={onReject}
+               />
+            ))}
           </div>
         </div>
-      </ScrollArea>
+      </div>
+      
+      {/* Floating Scroll Button */}
+      {showScrollButton && (
+          <div className="absolute bottom-24 right-8 z-10">
+              <button 
+                  onClick={scrollToBottom}
+                  className="p-2 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors"
+              >
+                  <ArrowDown className="w-4 h-4" />
+              </button>
+          </div>
+      )}
 
-      {/* Bottom Section - Plan Bar + Input - FIXED at bottom */}
-      <div
-        className="flex-shrink-0"
-        style={{
-          position: 'sticky',
-          bottom: 0,
-          background: 'linear-gradient(to bottom, transparent 0%, #1a1a1a 20%, #1a1a1a 100%)',
-          paddingTop: '16px',
-          marginTop: 'auto'
-        }}
-      >
-        <div className="flex justify-center w-full px-6">
+      {/* Bottom Input Section */}
+      <div className="flex-shrink-0 sticky bottom-0 pt-4 mt-auto bg-gradient-to-b from-transparent via-[#1a1a1a] to-[#1a1a1a]">
+        <div className="flex justify-center w-full px-6 pb-4">
           <div className="w-full max-w-[800px]">
-            {/* Expanded Plan View - Floating Overlay */}
-            <div className="relative">
-              <AnimatePresence>
+            {/* Plan Overlay */}
+            <AnimatePresence>
                 {isPlanExpanded && hasActivePlan && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                    transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-[400px] max-w-[90vw]"
-                    style={{
-                      background: 'rgba(30, 30, 30, 0.98)',
-                      backdropFilter: 'blur(12px)',
-                      borderRadius: '16px',
-                      boxShadow: '0 -8px 32px rgba(0,0,0,0.4)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      maxHeight: '320px',
-                      overflow: 'hidden'
-                    }}
-                  >
-                    {/* Plan Header */}
-                    <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-9 h-9 rounded-lg flex items-center justify-center"
-                          style={{ background: 'rgba(74, 158, 255, 0.15)' }}
-                        >
-                          <Monitor className="w-4.5 h-4.5" style={{ color: '#4a9eff' }} />
-                        </div>
-                        <div>
-                          <span className="font-medium text-sm" style={{ color: '#e8e8e8' }}>Task Progress</span>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <Terminal className="w-3 h-3" style={{ color: '#888888' }} />
-                            <span className="text-xs" style={{ color: '#888888' }}>RAGLOX is using Terminal</span>
-                          </div>
-                        </div>
-                      </div>
-                      <span className="text-sm font-medium" style={{ color: '#888888' }}>{completedTasks}/{totalTasks}</span>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="px-4 py-2">
-                      <div className="h-1 rounded-full overflow-hidden" style={{ background: '#2a2a2a' }}>
-                        <motion.div
-                          className="h-full rounded-full"
-                          style={{ background: '#4a9eff' }}
-                          initial={{ width: 0 }}
-                          animate={{ width: `${progress}%` }}
-                          transition={{ duration: 0.3 }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Tasks List - Scrollable */}
-                    <div className="px-2 pb-2 max-h-[180px] overflow-y-auto">
-                      {actualPlanTasks.map((task) => (
-                        <div
-                          key={task.id}
-                          className="flex items-center gap-3 py-2 px-2 rounded-lg transition-colors"
-                          style={{ cursor: 'default' }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
-                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                        >
-                          <div
-                            className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                            style={{
-                              background: task.status === 'completed' ? 'rgba(74, 222, 128, 0.15)' : '#2a2a2a'
-                            }}
-                          >
-                            {task.status === 'completed' ? (
-                              <Check className="w-3 h-3" style={{ color: '#4ade80' }} />
-                            ) : task.status === 'running' ? (
-                              <Loader2 className="w-3 h-3 animate-spin" style={{ color: '#4a9eff' }} />
-                            ) : (
-                              <Circle className="w-3 h-3" style={{ color: '#888888' }} />
-                            )}
-                          </div>
-                          <span
-                            className="text-sm flex-1"
-                            style={{ color: task.status === 'completed' ? '#888888' : '#e8e8e8' }}
-                          >
-                            {task.title}
-                          </span>
-                          <span className="text-xs" style={{ color: '#666666' }}>#{task.order}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Hide Button */}
-                    <button
-                      className="w-full flex items-center justify-center gap-2 py-3 text-sm transition-colors"
-                      style={{ borderTop: '1px solid rgba(255,255,255,0.06)', color: '#888888' }}
-                      onClick={() => setIsPlanExpanded(false)}
-                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                    >
-                      <ChevronDown className="w-4 h-4" />
-                      Hide Plan
-                    </button>
-                  </motion.div>
+                  <PlanOverlay 
+                    tasks={planTasks} 
+                    completed={completedTasks} 
+                    total={totalTasks} 
+                    progress={progress} 
+                    onClose={() => setIsPlanExpanded(false)} 
+                  />
                 )}
-              </AnimatePresence>
-            </div>
+            </AnimatePresence>
 
-            {/* Collapsed Plan Bar - Attached to Input */}
+            {/* Collapsed Plan Bar */}
             {hasActivePlan && !isPlanExpanded && (
               <div className="flex items-center justify-center mb-2">
                 <button
                   onClick={() => setIsPlanExpanded(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-full transition-all"
-                  style={{
-                    background: 'rgba(38, 38, 38, 0.9)',
-                    backdropFilter: 'blur(8px)',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(48, 48, 48, 0.95)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(38, 38, 38, 0.9)'}
+                  className="flex items-center gap-2 px-4 py-2 rounded-full transition-all bg-[#262626]/90 backdrop-blur-sm shadow-sm hover:bg-[#303030]/95"
                 >
-                  <Monitor className="w-4 h-4" style={{ color: '#A3A3A3' }} />
-                  <span className="text-sm" style={{ color: '#E5E5E5' }}>Task Progress</span>
-                  <span className="text-sm" style={{ color: '#A3A3A3' }}>{completedTasks}/{totalTasks}</span>
-                  <ChevronUp className="w-4 h-4" style={{ color: '#A3A3A3' }} />
+                  <Monitor className="w-4 h-4 text-[#A3A3A3]" />
+                  <span className="text-sm text-[#E5E5E5]">Task Progress</span>
+                  <span className="text-sm text-[#A3A3A3]">{completedTasks}/{totalTasks}</span>
+                  <ChevronUp className="w-4 h-4 text-[#A3A3A3]" />
                 </button>
               </div>
             )}
 
-            {/* Quick Actions Bar - Always Visible in active state */}
             <QuickActionsBar onAction={onSendMessage} />
 
-            {/* Input Area - Centered with max-width, Balanced Icons */}
-            <div className="pb-4">
-              <form onSubmit={handleSubmit}>
-                <div
-                  className="chat-input"
-                  style={{ boxShadow: 'var(--shadow-card)' }}
-                >
-                  {/* Plus Button - Primary action */}
-                  <button
-                    type="button"
-                    className="chat-input-btn"
-                    title="Add attachment"
-                  >
-                    <Plus className="w-4 h-4" />
+            <form onSubmit={handleSubmit}>
+              <div className="chat-input" style={{ boxShadow: 'var(--shadow-card)' }}>
+                <button type="button" className="chat-input-btn"><Plus className="w-4 h-4" /></button>
+                <textarea
+                  ref={inputRef}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={isSending ? "Please wait..." : "Send message to RAGLOX"}
+                  className="chat-input-field min-h-[32px] max-h-[200px] py-1.5"
+                  rows={1}
+                  disabled={isSending || !isConnected}
+                />
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button type="button" className="chat-input-btn"><Mic className="w-4 h-4" /></button>
+                  <button type="submit" className={cn("chat-input-send", inputValue.trim() && "active")} disabled={!inputValue.trim()}>
+                    <ArrowDown className="w-4 h-4 rotate-180" />
                   </button>
-
-                  {/* Text Input */}
-                  <textarea
-                    ref={inputRef}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={isSending || isAITyping ? "Please wait..." : "Send message to RAGLOX"}
-                    className="chat-input-field min-h-[32px] max-h-[200px] py-1.5"
-                    rows={1}
-                    disabled={isSending || isAITyping || !isConnected}
-                  />
-
-                  {/* Right Icons - Balanced */}
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      type="button"
-                      className="chat-input-btn"
-                      title="Voice input"
-                    >
-                      <Mic className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="submit"
-                      className={cn("chat-input-send", inputValue.trim() && "active")}
-                      disabled={!inputValue.trim()}
-                      title="Send"
-                    >
-                      <ArrowDown className="w-4 h-4 rotate-180" />
-                    </button>
-                  </div>
                 </div>
-              </form>
-            </div>
+              </div>
+            </form>
           </div>
         </div>
       </div>
@@ -617,477 +309,198 @@ export function AIChatPanel({
   );
 }
 
-// ============================================
-// Connection Status Indicator Component
-// ============================================
-function ConnectionStatusIndicator({ connectionStatus }: { connectionStatus: ConnectionStatus }) {
+// Sub-components
+
+function Header({ connectionStatus, isConnected }: { connectionStatus: any, isConnected: boolean }) {
   return (
-    <div className="flex items-center gap-1.5">
-      {connectionStatus === "connected" ? (
-        <>
-          <div
-            className="w-2 h-2 rounded-full"
-            style={{
-              background: '#4ade80',
-              boxShadow: '0 0 6px rgba(74, 222, 128, 0.5)'
-            }}
-          />
-          <span className="text-xs" style={{ color: '#4ade80' }}>Live</span>
-        </>
-      ) : connectionStatus === "connecting" ? (
-        <>
-          <Loader2 className="w-3 h-3 animate-spin" style={{ color: '#f59e0b' }} />
-          <span className="text-xs" style={{ color: '#f59e0b' }}>Connecting...</span>
-        </>
-      ) : connectionStatus === "disabled" ? (
-        <>
-          <WifiOff className="w-3 h-3" style={{ color: '#f59e0b' }} />
-          <span className="text-xs" style={{ color: '#f59e0b' }}>Polling Mode</span>
-        </>
-      ) : (
-        <>
-          <div
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#ef4444' }}
-          />
-          <span className="text-xs" style={{ color: '#ef4444' }}>Offline</span>
-        </>
+    <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+      <div className="flex items-center gap-2">
+        <span className="font-medium text-foreground">RAGLOX 3.0</span>
+        <ChevronDown className="w-4 h-4 text-muted-foreground" />
+      </div>
+      <div className="flex items-center gap-1.5">
+          <div className={cn("w-2 h-2 rounded-full", isConnected ? "bg-green-500 shadow-[0_0_6px_rgba(74,222,128,0.5)]" : "bg-red-500")} />
+          <span className={cn("text-xs", isConnected ? "text-green-500" : "text-red-500")}>
+            {isConnected ? "Live" : connectionStatus}
+          </span>
+      </div>
+    </div>
+  );
+}
+
+function ChatMessageItem({ message }: { message: ChatMessage }) {
+  const { role, content, status, error, isOptimistic } = message;
+  if (!content) return null;
+
+  const isUser = role === "user";
+
+  return (
+    <div className={cn("flex items-start gap-3", isUser ? "opacity-100" : "")}>
+      {!isUser && (
+        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 bg-[#4a9eff]/15">
+          <Brain className="w-4 h-4 text-[#4a9eff]" />
+        </div>
       )}
-    </div>
-  );
-}
-
-// ============================================
-// Initial Quick Actions (Grid Layout - for Welcome Screen)
-// ============================================
-interface InitialQuickActionsProps {
-  onAction: (action: string) => void;
-}
-
-function InitialQuickActions({ onAction }: InitialQuickActionsProps) {
-  const quickActions = [
-    { 
-      icon: Target, 
-      label: "Plan Mission", 
-      description: "Create an attack plan for targets",
-      action: "Help me create a penetration testing plan for my targets",
-      color: "#4a9eff",
-    },
-    { 
-      icon: Shield, 
-      label: "Check Environment", 
-      description: "Verify execution environment status",
-      action: "Check my execution environment status",
-      color: "#f59e0b",
-    },
-    { 
-      icon: Terminal, 
-      label: "Execute Command", 
-      description: "Run a command on the target",
-      action: "I want to execute a command on the target",
-      color: "#4ade80",
-    },
-    { 
-      icon: Sparkles, 
-      label: "Get Status", 
-      description: "View mission progress and findings",
-      action: "Show me the current mission status and findings",
-      color: "#a78bfa",
-    },
-  ];
-
-  return (
-    <div className="grid grid-cols-2 gap-3">
-      {quickActions.map((action) => (
-        <button
-          key={action.label}
-          onClick={() => onAction(action.action)}
-          className="flex items-start gap-3 p-4 rounded-xl text-left transition-all duration-200 group"
-          style={{ 
-            background: 'rgba(38, 38, 38, 0.6)',
-            border: '1px solid rgba(255, 255, 255, 0.06)'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(48, 48, 48, 0.8)';
-            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'rgba(38, 38, 38, 0.6)';
-            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.06)';
-          }}
-        >
-          <div 
-            className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors"
-            style={{ background: `${action.color}15` }}
-          >
-            <action.icon className="w-5 h-5" style={{ color: action.color }} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <span className="text-sm font-medium block" style={{ color: '#e8e8e8' }}>
-              {action.label}
-            </span>
-            <span className="text-xs block mt-0.5" style={{ color: '#666666' }}>
-              {action.description}
-            </span>
-          </div>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ============================================
-// Event Item Component - Manus style
-// ============================================
-interface EventItemProps {
-  event: EventCardType;
-  isExpanded: boolean;
-  onToggle: () => void;
-  expandedKnowledge: Set<string>;
-  onToggleKnowledge: (id: string) => void;
-  onCommandClick?: (command: string) => void;
-  onTerminalClick?: () => void;
-}
-
-function EventItem({
-  event,
-  isExpanded,
-  onToggle,
-  expandedKnowledge,
-  onToggleKnowledge,
-  onCommandClick,
-  onTerminalClick
-}: EventItemProps) {
-  const knowledge = event.knowledge || [];
-
-  return (
-    <div className="space-y-2">
-      {/* Event Header */}
-      <button
-        onClick={onToggle}
-        className="flex items-center gap-2 w-full text-left group py-2"
-      >
-        <div
-          className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{
-            background: event.status === "completed" ? 'rgba(74, 222, 128, 0.15)' : '#2a2a2a'
-          }}
-        >
-          {event.status === "completed" ? (
-            <Check className="w-3 h-3" style={{ color: '#4ade80' }} />
-          ) : event.status === "running" ? (
-            <Loader2 className="w-3 h-3 animate-spin" style={{ color: '#4a9eff' }} />
-          ) : (
-            <Circle className="w-3 h-3" style={{ color: '#888888' }} />
-          )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-sm font-medium text-[#e8e8e8]">{isUser ? "You" : "RAGLOX"}</span>
+          {status === "sending" && <span className="text-xs text-[#4a9eff] flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin"/> Sending...</span>}
+          {status === "streaming" && <span className="text-xs text-[#4a9eff] animate-pulse">Typing...</span>}
+          {error && <span className="text-xs text-red-500">Failed</span>}
         </div>
-
-        <span className="font-medium flex-1" style={{ color: '#e8e8e8' }}>{event.title}</span>
-
-        <ChevronUp className={cn(
-          "w-4 h-4 transition-transform duration-200",
-          !isExpanded && "rotate-180"
-        )} style={{ color: '#888888' }} />
-      </button>
-
-      {/* Event Content */}
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="pl-7 space-y-3 pt-1">
-              {/* Description */}
-              {event.description && (
-                <p className="text-sm leading-relaxed" style={{ color: '#888888' }}>{event.description}</p>
-              )}
-
-              {/* Knowledge Badge - Manus style */}
-              {knowledge.length > 0 && (
-                <div className="space-y-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onToggleKnowledge(event.id);
-                    }}
-                    className="knowledge-badge"
-                  >
-                    <Brain className="icon" />
-                    <span>Knowledge recalled({knowledge.length})</span>
-                    <ChevronDown className={cn(
-                      "chevron",
-                      expandedKnowledge.has(event.id) && "expanded"
-                    )} />
-                  </button>
-
-                  <AnimatePresence>
-                    {expandedKnowledge.has(event.id) && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.15 }}
-                        className="overflow-hidden"
-                      >
-                        <div
-                          className="rounded-lg p-3 space-y-1"
-                          style={{ background: '#1f1f1f', boxShadow: '0 4px 24px rgba(0,0,0,0.15)' }}
-                        >
-                          {knowledge.map((k) => (
-                            <a
-                              key={k.id}
-                              href="#"
-                              onClick={(e) => e.preventDefault()}
-                              className="block text-sm py-1 hover:underline"
-                              style={{ color: '#4a9eff' }}
-                            >
-                              {k.title}
-                            </a>
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
-
-              {/* Command Badge - Manus style */}
-              {event.command && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCommandClick?.(event.command!);
-                  }}
-                  className="command-pill"
-                >
-                  <Terminal className="icon" />
-                  <span>Executing command</span>
-                  <code>{event.command}</code>
-                </button>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-// ============================================
-// Quick Actions Bar Component - Always visible above input (Active State)
-// ============================================
-interface QuickActionsBarProps {
-  onAction: (action: string) => void;
-}
-
-function QuickActionsBar({ onAction }: QuickActionsBarProps) {
-  const quickActions = [
-    { 
-      icon: Target, 
-      label: "Recon", 
-      action: "Start reconnaissance on target",
-      color: "#4a9eff",
-      tooltip: "Start Reconnaissance"
-    },
-    { 
-      icon: Shield, 
-      label: "Scan", 
-      action: "Scan for vulnerabilities",
-      color: "#f59e0b",
-      tooltip: "Scan Vulnerabilities"
-    },
-    { 
-      icon: Terminal, 
-      label: "Shell", 
-      action: "Attempt to get shell access",
-      color: "#4ade80",
-      tooltip: "Get Shell Access"
-    },
-    { 
-      icon: Sparkles, 
-      label: "Auto", 
-      action: "Run in autonomous mode",
-      color: "#a78bfa",
-      tooltip: "Autonomous Mode"
-    },
-  ];
-
-  return (
-    <div className="flex justify-center mb-3">
-      <div 
-        className="flex items-center gap-1 px-2 py-1.5 rounded-full"
-        style={{ 
-          background: 'rgba(42, 42, 42, 0.7)',
-          backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(255, 255, 255, 0.06)'
-        }}
-      >
-        {quickActions.map((action) => (
-          <button
-            key={action.label}
-            onClick={() => onAction(action.action)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200"
-            style={{ color: '#888888' }}
-            title={action.tooltip}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-              e.currentTarget.style.color = action.color;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.color = '#888888';
-            }}
-          >
-            <action.icon className="w-3.5 h-3.5" />
-            <span>{action.label}</span>
-          </button>
-        ))}
+        
+        <div className={cn("text-sm leading-relaxed text-[#e8e8e8]", isOptimistic && "opacity-70")}>
+            <RichMessage content={content} role={role} />
+        </div>
+        
+        {error && <p className="text-xs mt-1 text-red-500">{error}</p>}
       </div>
     </div>
   );
 }
 
-// ============================================
-// Typing Indicator Component
-// ============================================
 function TypingIndicator() {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
-      className="flex items-start gap-3"
-    >
-      <div 
-        className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" 
-        style={{ background: 'rgba(74, 158, 255, 0.15)' }}
-      >
-        <Brain className="w-4 h-4" style={{ color: '#4a9eff' }} />
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex items-start gap-3">
+      <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 bg-[#4a9eff]/15">
+        <Brain className="w-4 h-4 text-[#4a9eff]" />
       </div>
       <div className="flex-1">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-sm font-medium" style={{ color: '#e8e8e8' }}>RAGLOX</span>
-          <div className="flex items-center gap-1 text-xs" style={{ color: '#4a9eff' }}>
-            <Loader2 className="w-3 h-3 animate-spin" />
-            <span>Typing...</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 py-2">
-          <motion.div
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#4a9eff' }}
-            animate={{ opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1.5, repeat: Infinity, delay: 0 }}
-          />
-          <motion.div
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#4a9eff' }}
-            animate={{ opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1.5, repeat: Infinity, delay: 0.2 }}
-          />
-          <motion.div
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#4a9eff' }}
-            animate={{ opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1.5, repeat: Infinity, delay: 0.4 }}
-          />
-        </div>
+         <span className="text-sm font-medium text-[#e8e8e8] block mb-1">RAGLOX</span>
+         <div className="flex items-center gap-1">
+            {[0, 0.2, 0.4].map((delay, i) => (
+                <motion.div key={i} className="w-2 h-2 rounded-full bg-[#4a9eff]" animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.5, repeat: Infinity, delay }} />
+            ))}
+         </div>
       </div>
     </motion.div>
   );
 }
 
-// ============================================
-// Chat Message Item Component with Status Indicators
-// ============================================
-interface ChatMessageItemProps {
-  message: ChatMessage;
-}
-
-function ChatMessageItem({ message }: ChatMessageItemProps) {
-  const { role, content, status, error } = message;
-  
-  // Don't render empty content
-  if (!content) return null;
-  
-  // User message with status indicators
-  if (role === "user") {
+function InitialQuickActions({ onAction }: { onAction: (a: string) => void }) {
+    const actions = [
+        { icon: Target, label: "Plan Mission", action: "Help me create a penetration testing plan", color: "#4a9eff" },
+        { icon: Shield, label: "Check Env", action: "Check my execution environment status", color: "#f59e0b" },
+        { icon: Terminal, label: "Exec Cmd", action: "I want to execute a command", color: "#4ade80" },
+        { icon: Sparkles, label: "Status", action: "Show me mission status", color: "#a78bfa" },
+    ];
     return (
-      <div className="flex items-start gap-3">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-medium" style={{ color: '#e8e8e8' }}>You</span>
-            {/* Status Indicators */}
-            {status === "pending" && (
-              <div className="flex items-center gap-1 text-xs" style={{ color: '#888888' }}>
-                <Circle className="w-2 h-2 fill-current" />
-                <span>Sending...</span>
-              </div>
-            )}
-            {status === "sending" && (
-              <div className="flex items-center gap-1 text-xs" style={{ color: '#4a9eff' }}>
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span>Sending...</span>
-              </div>
-            )}
-            {status === "sent" && (
-              <div className="flex items-center gap-1 text-xs" style={{ color: '#4ade80' }}>
-                <Check className="w-3 h-3" />
-                <span>Sent</span>
-              </div>
-            )}
-            {status === "failed" && (
-              <div className="flex items-center gap-1 text-xs" style={{ color: '#ef4444' }}>
-                <Circle className="w-3 h-3 fill-current" />
-                <span>Failed</span>
-              </div>
-            )}
-          </div>
-          <p 
-            className="text-sm leading-relaxed"
-            style={{ 
-              color: status === "failed" ? '#ef4444' : '#e8e8e8',
-              opacity: status === "pending" || status === "sending" ? 0.7 : 1
-            }}
-          >
-            {content}
-          </p>
-          {error && (
-            <p className="text-xs mt-1" style={{ color: '#ef4444' }}>
-              {error}
-            </p>
-          )}
+        <div className="grid grid-cols-2 gap-3">
+            {actions.map(a => (
+                <button key={a.label} onClick={() => onAction(a.action)} className="flex items-start gap-3 p-4 rounded-xl text-left transition-all duration-200 bg-[#262626]/60 border border-white/5 hover:bg-[#303030]/80">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${a.color}15` }}>
+                        <a.icon className="w-5 h-5" style={{ color: a.color }} />
+                    </div>
+                    <div>
+                        <span className="text-sm font-medium block text-[#e8e8e8]">{a.label}</span>
+                    </div>
+                </button>
+            ))}
         </div>
-      </div>
     );
-  }
-  
-  // System/Assistant message
-  return (
-    <div className="flex items-start gap-3">
-      <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(74, 158, 255, 0.15)' }}>
-        <Brain className="w-4 h-4" style={{ color: '#4a9eff' }} />
-      </div>
-      <div className="flex-1">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-sm font-medium" style={{ color: '#e8e8e8' }}>RAGLOX</span>
-          {status === "streaming" && (
-            <div className="flex items-center gap-1 text-xs" style={{ color: '#4a9eff' }}>
-              <Loader2 className="w-3 h-3 animate-spin" />
-              <span>Typing...</span>
-            </div>
-          )}
-        </div>
-        <p className="text-sm leading-relaxed" style={{ color: '#e8e8e8' }}>
-          {content}
-        </p>
-      </div>
-    </div>
-  );
 }
 
-export default AIChatPanel;
+function QuickActionsBar({ onAction }: { onAction: (a: string) => void }) {
+    const actions = [
+        { icon: Target, label: "Recon", action: "Start reconnaissance", color: "#4a9eff" },
+        { icon: Shield, label: "Scan", action: "Scan for vulnerabilities", color: "#f59e0b" },
+        { icon: Terminal, label: "Shell", action: "Attempt shell access", color: "#4ade80" },
+    ];
+    return (
+        <div className="flex justify-center mb-3">
+            <div className="flex items-center gap-1 px-2 py-1.5 rounded-full bg-[#2a2a2a]/70 backdrop-blur border border-white/5">
+                {actions.map(a => (
+                    <button key={a.label} onClick={() => onAction(a.action)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-[#888888] hover:bg-white/5 hover:text-[#e8e8e8] transition-colors">
+                        <a.icon className="w-3.5 h-3.5" />
+                        <span>{a.label}</span>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function PlanOverlay({ tasks, completed, total, progress, onClose }: any) {
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-[400px] max-w-[90vw] bg-[#1e1e1e]/98 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 overflow-hidden"
+        >
+            <div className="flex items-center justify-between p-4 border-b border-white/5">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-[#4a9eff]/15">
+                        <Monitor className="w-4.5 h-4.5 text-[#4a9eff]" />
+                    </div>
+                    <div>
+                        <span className="font-medium text-sm text-[#e8e8e8]">Task Progress</span>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                            <Terminal className="w-3 h-3 text-[#888888]" />
+                            <span className="text-xs text-[#888888]">RAGLOX Terminal</span>
+                        </div>
+                    </div>
+                </div>
+                <span className="text-sm font-medium text-[#888888]">{completed}/{total}</span>
+            </div>
+            <div className="px-4 py-2">
+                <div className="h-1 rounded-full bg-[#2a2a2a] overflow-hidden">
+                    <motion.div className="h-full rounded-full bg-[#4a9eff]" initial={{ width: 0 }} animate={{ width: `${progress}%` }} />
+                </div>
+            </div>
+            <div className="px-2 pb-2 max-h-[180px] overflow-y-auto">
+                {tasks.map((task: any) => (
+                    <div key={task.id} className="flex items-center gap-3 py-2 px-2 rounded-lg hover:bg-white/5">
+                        <div className={cn("w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0", task.status === 'completed' ? 'bg-green-500/15' : 'bg-[#2a2a2a]')}>
+                            {task.status === 'completed' ? <Check className="w-3 h-3 text-green-500" /> : <Circle className="w-3 h-3 text-[#888888]" />}
+                        </div>
+                        <span className={cn("text-sm flex-1", task.status === 'completed' ? "text-[#888888]" : "text-[#e8e8e8]")}>{task.title}</span>
+                    </div>
+                ))}
+            </div>
+            <button onClick={onClose} className="w-full py-3 text-sm text-[#888888] hover:bg-white/5 border-t border-white/5 flex items-center justify-center gap-2">
+                <ChevronDown className="w-4 h-4" /> Hide Plan
+            </button>
+        </motion.div>
+    );
+}
+
+function EventItemWrapper({ event, isExpanded, onToggle, expandedKnowledge, onToggleKnowledge, onApprove, onReject, onCommandClick, onExpandTerminal }: any) {
+    if (event.type === "approval_request" && event.approval) {
+        return <ApprovalCard approval={event.approval} onApprove={onApprove} onReject={onReject} />;
+    }
+    if (event.type === "ai_plan" && event.aiPlan) {
+        return <AIPlanCard data={event.aiPlan} />;
+    }
+    if (event.type === "artifact" && event.artifact) {
+         // Simplified artifact rendering
+         return <div className="text-white">Artifact: {event.title}</div>;
+    }
+    
+    // Regular event
+    return (
+        <div className="space-y-2">
+            <button onClick={onToggle} className="flex items-center gap-2 w-full text-left group py-2">
+                 <div className={cn("w-5 h-5 rounded-full flex items-center justify-center", event.status === "completed" ? "bg-green-500/15" : "bg-[#2a2a2a]")}>
+                    {event.status === "completed" ? <Check className="w-3 h-3 text-green-500" /> : <Circle className="w-3 h-3 text-[#888888]" />}
+                 </div>
+                 <span className="font-medium flex-1 text-[#e8e8e8]">{event.title}</span>
+                 <ChevronUp className={cn("w-4 h-4 text-[#888888] transition-transform", !isExpanded && "rotate-180")} />
+            </button>
+            <AnimatePresence>
+                {isExpanded && (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <div className="pl-7 pt-1 space-y-3">
+                             {event.description && <p className="text-sm leading-relaxed text-[#888888]">{event.description}</p>}
+                             {event.command && (
+                                <button onClick={() => { onCommandClick?.(event.command); onExpandTerminal?.(); }} className="command-pill">
+                                    <Terminal className="icon" /> <span>Executing</span> <code>{event.command}</code>
+                                </button>
+                             )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
