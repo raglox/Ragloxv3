@@ -217,8 +217,32 @@ export function useWebSocket(
         break;
 
       case "chat_message":
-        setNewChatMessages((prev) => [...prev, data as ChatMessage]);
-        setEvents((prev) => [eventCard, ...prev].slice(0, MAX_EVENTS_DISPLAY));
+        // DEDUPLICATION LOGIC:
+        // If we have a streaming message that just finished, ignore "chat_message" events 
+        // that are likely the final "complete" packet for the same content.
+        {
+            const msgData = data as ChatMessage;
+            // If this message content is already in our chat history (checking last 3 messages), skip it.
+            // This prevents "Message from system" echoing what was just streamed.
+            setNewChatMessages(prev => {
+                const lastMsg = prev[prev.length - 1];
+                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content === msgData.content) {
+                    console.log("[WebSocket] Skipping duplicate chat_message (already streamed)");
+                    return prev;
+                }
+                // Also check if we are currently streaming a message with similar ID or content
+                if (currentStreamingMessageId) {
+                     console.log("[WebSocket] Skipping chat_message while streaming is active");
+                     return prev;
+                }
+                
+                return [...prev, msgData];
+            });
+            
+            // Only add to events if it's NOT a duplicate system echo
+            // We'll skip adding simple chat messages to the "Events" list to reduce clutter
+            // setEvents((prev) => [eventCard, ...prev].slice(0, MAX_EVENTS_DISPLAY));
+        }
         break;
 
       case "ai_response_start":

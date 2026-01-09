@@ -6,6 +6,7 @@ export type { CommandHistoryEntry } from "./TerminalPanel";
 export { ApprovalCard } from "./ApprovalCard";
 export { AIPlanCard } from "./AIPlanCard";
 export { UtilityPanel } from "./UtilityPanel";
+// Explicit exports instead of using named exports from default
 export { CredentialCard, SessionCard, VulnerabilityCard, TargetCard } from "./ArtifactCard";
 export { ProgressBar } from "./ProgressBar";
 export { PlanView, PlanBadge } from "./PlanView";

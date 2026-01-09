@@ -45,8 +45,8 @@ const LEVEL_CONFIG = {
     borderColor: "border-blue-500/20"
   },
   2: {
-    label: "Simulation",
-    description: "Commands run in simulation mode - VM provisioning in progress",
+    label: "Sandbox",
+    description: "Commands run in sandbox mode - VM provisioning in progress",
     icon: Activity,
     color: "text-yellow-500",
     bgColor: "bg-yellow-500/10",

@@ -491,7 +491,11 @@ function EventItemWrapper({ event, isExpanded, onToggle, expandedKnowledge, onTo
                 {isExpanded && (
                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                         <div className="pl-7 pt-1 space-y-3">
-                             {event.description && <p className="text-sm leading-relaxed text-[#888888]">{event.description}</p>}
+                             {event.description && (
+                                <div className="text-sm leading-relaxed text-[#888888]">
+                                    <RichMessage content={event.description} role="system" />
+                                </div>
+                             )}
                              {event.command && (
                                 <button onClick={() => { onCommandClick?.(event.command); onExpandTerminal?.(); }} className="command-pill">
                                     <Terminal className="icon" /> <span>Executing</span> <code>{event.command}</code>
