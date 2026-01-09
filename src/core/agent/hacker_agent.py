@@ -576,7 +576,18 @@ Return the plan as a JSON array of step objects.
         message: str,
         context: AgentContext
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Stream LLM response with tool detection"""
+        """
+        Stream LLM response with tool detection and reasoning support.
+        
+        ═══════════════════════════════════════════════════════════════
+        PHASE 1: Enhanced with DeepSeek streaming & reasoning display
+        ═══════════════════════════════════════════════════════════════
+        
+        Yields:
+        - {"type": "reasoning", "content": "..."}  # DeepSeek R1 reasoning
+        - {"type": "text", "content": "..."}        # Regular response
+        - {"type": "tool_call", "tool": "...", "args": {...}}  # Tool execution
+        """
         llm = await self._get_llm_service()
         
         if not llm:
@@ -598,7 +609,58 @@ Return the plan as a JSON array of step objects.
                 LLMMessage(role=MessageRole.USER, content=message)
             ]
             
-            # Check if LLM supports streaming
+            # ═══════════════════════════════════════════════════════════
+            # PHASE 1: Try DeepSeek streaming with reasoning
+            # ═══════════════════════════════════════════════════════════
+            if hasattr(llm, 'stream_generate_with_reasoning'):
+                # DeepSeek provider with reasoning support
+                accumulated_text = ""
+                
+                try:
+                    async for chunk in llm.stream_generate_with_reasoning(messages):
+                        chunk_type = chunk.get("type")
+                        content = chunk.get("content", "")
+                        
+                        if chunk_type == "reasoning":
+                            # Yield reasoning chunks for UI display
+                            yield {"type": "reasoning", "content": content}
+                        
+                        elif chunk_type == "reasoning_complete":
+                            # Full reasoning available
+                            yield {"type": "reasoning_complete", "content": content}
+                        
+                        elif chunk_type == "text":
+                            accumulated_text += content
+                            
+                            # Check for tool call pattern
+                            tool_call = self._extract_tool_call(accumulated_text)
+                            if tool_call:
+                                # Yield text before tool call
+                                text_before = accumulated_text[:accumulated_text.find('{"tool"')]
+                                if text_before.strip():
+                                    yield {"type": "text", "content": text_before}
+                                
+                                # Yield tool call
+                                yield {
+                                    "type": "tool_call",
+                                    "tool": tool_call["tool"],
+                                    "args": tool_call.get("args", {})
+                                }
+                                
+                                # Reset accumulated text
+                                end_pos = accumulated_text.find('}', accumulated_text.find('{"tool"')) + 1
+                                accumulated_text = accumulated_text[end_pos:]
+                            else:
+                                # Yield text chunk
+                                yield {"type": "text", "content": content}
+                
+                except Exception as e:
+                    self.logger.warning(f"Reasoning streaming failed: {e}, falling back to standard streaming")
+                    # Fall through to standard streaming
+            
+            # ═══════════════════════════════════════════════════════════
+            # Standard streaming (fallback or non-DeepSeek providers)
+            # ═══════════════════════════════════════════════════════════
             if hasattr(llm, 'stream_generate'):
                 accumulated_text = ""
                 
@@ -641,8 +703,8 @@ Return the plan as a JSON array of step objects.
                     yield {"type": "text", "content": processed["content"]}
                     
         except Exception as e:
-            self.logger.error(f"LLM streaming error: {e}")
-            yield {"type": "text", "content": f"Error: {e}"}
+            self.logger.error(f"LLM streaming error: {e}", exc_info=True)
+            yield {"type": "error", "content": f"Streaming error: {str(e)}"}
     
     async def _process_llm_response(
         self,

@@ -179,6 +179,13 @@ export interface ChatMessage {
   isOptimistic?: boolean;
   // Error message if failed
   error?: string;
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 1: DeepSeek Integration - Reasoning support
+  // ═══════════════════════════════════════════════════════════════
+  // DeepSeek R1 reasoning process (chain of thought)
+  reasoning?: string;
+  // Whether reasoning is still being generated
+  isReasoningStreaming?: boolean;
 }
 
 // ============================================

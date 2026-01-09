@@ -347,6 +347,168 @@ class DeepSeekProvider(OpenAIProvider):
         """
         return True
     
+    async def stream_generate(
+        self,
+        messages: List[LLMMessage],
+        **kwargs
+    ):
+        """
+        Generate streaming response from DeepSeek.
+        
+        Yields chunks of text as they arrive from the API.
+        This enables real-time display of responses in the UI.
+        
+        Args:
+            messages: List of conversation messages
+            **kwargs: Additional parameters
+        
+        Yields:
+            str: Text chunks as they arrive
+        
+        Example:
+            >>> async for chunk in provider.stream_generate(messages):
+            ...     print(chunk, end='', flush=True)
+            "Let me analyze... [reasoning] The target is..."
+        """
+        self._validate_messages(messages)
+        await self._check_rate_limit()
+        
+        # Build request with streaming enabled
+        request_data = self._build_request(messages, **kwargs)
+        request_data["stream"] = True
+        
+        # Get client
+        client = await self._get_client()
+        
+        try:
+            # Make streaming request
+            async with client.stream(
+                "POST",
+                "/chat/completions",
+                json=request_data,
+                timeout=httpx.Timeout(
+                    connect=self.config.connect_timeout,
+                    read=120.0,  # Longer timeout for streaming
+                    write=self.config.timeout,
+                    pool=self.config.timeout,
+                )
+            ) as response:
+                # Check for errors
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    raise LLMError(
+                        f"Streaming error: {response.status_code} - {error_text.decode()}",
+                        provider=self.provider_name
+                    )
+                
+                # Read SSE stream
+                buffer = ""
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    
+                    # SSE format: "data: {json}"
+                    if line.startswith("data: "):
+                        data_str = line[6:]  # Remove "data: " prefix
+                        
+                        # Check for end of stream
+                        if data_str == "[DONE]":
+                            break
+                        
+                        try:
+                            data = json.loads(data_str)
+                            
+                            # Extract content delta
+                            choices = data.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content")
+                                
+                                if content:
+                                    yield content
+                                
+                                # Check for reasoning_content (DeepSeek R1 specific)
+                                reasoning = delta.get("reasoning_content")
+                                if reasoning:
+                                    # Optionally yield reasoning as metadata
+                                    # For now, we'll include it in the stream
+                                    yield f"[Reasoning: {reasoning}] "
+                        
+                        except json.JSONDecodeError:
+                            # Skip malformed JSON
+                            continue
+        
+        except httpx.TimeoutException as e:
+            self._error_count += 1
+            raise LLMError(
+                f"Streaming timeout: {str(e)}",
+                provider=self.provider_name
+            )
+        
+        except httpx.RequestError as e:
+            self._error_count += 1
+            raise LLMError(
+                f"Streaming connection error: {str(e)}",
+                provider=self.provider_name
+            )
+        
+        except Exception as e:
+            self._error_count += 1
+            raise LLMError(
+                f"Streaming error: {str(e)}",
+                provider=self.provider_name
+            )
+    
+    async def stream_generate_with_reasoning(
+        self,
+        messages: List[LLMMessage],
+        **kwargs
+    ):
+        """
+        Stream response with separate reasoning and content.
+        
+        Yields dictionaries with 'type' field:
+        - {"type": "reasoning", "content": "..."}
+        - {"type": "text", "content": "..."}
+        
+        Args:
+            messages: Conversation messages
+            **kwargs: Additional parameters
+        
+        Yields:
+            Dict with type and content
+        """
+        # Force reasoning model
+        if "model" not in kwargs:
+            kwargs["model"] = "deepseek-reasoner"
+        
+        accumulated_reasoning = ""
+        accumulated_content = ""
+        in_reasoning = True  # Assume reasoning comes first
+        
+        async for chunk in self.stream_generate(messages, **kwargs):
+            # Check if this looks like reasoning
+            if "[Reasoning:" in chunk:
+                # Extract reasoning
+                start = chunk.find("[Reasoning:") + 11
+                end = chunk.find("]", start)
+                if end > start:
+                    reasoning_chunk = chunk[start:end]
+                    accumulated_reasoning += reasoning_chunk
+                    yield {"type": "reasoning", "content": reasoning_chunk}
+                continue
+            
+            # Check for reasoning end markers
+            if in_reasoning and any(marker in chunk for marker in ["---", "Answer:", "Conclusion:"]):
+                in_reasoning = False
+                # Yield complete reasoning
+                if accumulated_reasoning:
+                    yield {"type": "reasoning_complete", "content": accumulated_reasoning}
+            
+            # Regular content
+            accumulated_content += chunk
+            yield {"type": "text", "content": chunk}
+    
     async def health_check(self) -> bool:
         """
         Check if DeepSeek API is accessible.

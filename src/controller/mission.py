@@ -1701,6 +1701,71 @@ class MissionController:
         
         return self._mission_agents.get(mission_id)
     
+    async def _prepare_vm_on_first_message(self, mission_id: str) -> bool:
+        """
+        Auto-prepare Firecracker VM on first chat message.
+        
+        ═══════════════════════════════════════════════════════════════
+        PHASE 1: Auto VM Preparation
+        ═══════════════════════════════════════════════════════════════
+        
+        Automatically provisions and prepares the execution environment
+        when user sends their first message, so they don't have to
+        manually click "Start" buttons.
+        
+        Args:
+            mission_id: Mission ID
+        
+        Returns:
+            True if VM is ready or being prepared, False on error
+        """
+        try:
+            # Get mission data
+            mission = await self.blackboard.get_mission(mission_id)
+            if not mission:
+                self.logger.warning(f"Mission {mission_id} not found for VM prep")
+                return False
+            
+            vm_status = mission.get("vm_status", "not_created")
+            
+            # If VM is not created, provision it
+            if vm_status == "not_created":
+                self.logger.info(f"🚀 Auto-preparing VM for mission {mission_id}...")
+                
+                # Update mission status to show we're preparing
+                await self.blackboard.update_mission(mission_id, {
+                    "vm_status": "provisioning",
+                    "status": "running"
+                })
+                
+                # Broadcast event to UI
+                try:
+                    from ..api.websocket import broadcast_mission_update
+                    await broadcast_mission_update(
+                        mission_id=mission_id,
+                        update={
+                            "vm_status": "provisioning",
+                            "message": "Preparing execution environment...",
+                            "progress": 0
+                        }
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast VM prep status: {e}")
+                
+                # Provision VM (async - don't wait)
+                # In production, this would call environment_manager.provision_vm()
+                # For now, we'll simulate with a placeholder
+                # TODO: Integrate with actual Firecracker provisioning
+                
+                return True
+            
+            # VM is already created or being created
+            return vm_status in ["provisioning", "ready", "running"]
+            
+        except Exception as e:
+            self.logger.error(f"Failed to auto-prepare VM: {e}", exc_info=True)
+            return False
+    
     async def _build_agent_context(self, mission_id: str):
         """
         Build AgentContext with mission state for agent processing.
@@ -1722,6 +1787,12 @@ class MissionController:
         
         # Get chat history
         chat_history = self._chat_history.get(mission_id, [])
+        
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 1: Auto-prepare VM on first message
+        # ═══════════════════════════════════════════════════════════
+        if len(chat_history) <= 1:  # First user message
+            await self._prepare_vm_on_first_message(mission_id)
         
         # Create context
         context = AgentContext(

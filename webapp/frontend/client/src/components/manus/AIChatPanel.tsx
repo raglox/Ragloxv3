@@ -22,6 +22,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { AIPlanCard } from "./AIPlanCard";
 import { CredentialCard, SessionCard, VulnerabilityCard, TargetCard } from "./ArtifactCard";
 import RichMessage from "../chat/RichMessage";
+import { ReasoningDisplay } from "../chat/ReasoningDisplay";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 
 interface AIChatPanelProps {
@@ -329,7 +330,7 @@ function Header({ connectionStatus, isConnected }: { connectionStatus: any, isCo
 }
 
 function ChatMessageItem({ message }: { message: ChatMessage }) {
-  const { role, content, status, error, isOptimistic } = message;
+  const { role, content, status, error, isOptimistic, reasoning, isReasoningStreaming } = message;
   if (!content) return null;
 
   const isUser = role === "user";
@@ -341,13 +342,24 @@ function ChatMessageItem({ message }: { message: ChatMessage }) {
           <Brain className="w-4 h-4 text-[#4a9eff]" />
         </div>
       )}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 space-y-2">
         <div className="flex items-center gap-2 mb-1">
           <span className="text-sm font-medium text-[#e8e8e8]">{isUser ? "You" : "RAGLOX"}</span>
           {status === "sending" && <span className="text-xs text-[#4a9eff] flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin"/> Sending...</span>}
           {status === "streaming" && <span className="text-xs text-[#4a9eff] animate-pulse">Typing...</span>}
           {error && <span className="text-xs text-red-500">Failed</span>}
         </div>
+        
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* PHASE 1: DeepSeek Reasoning Display */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {reasoning && !isUser && (
+          <ReasoningDisplay 
+            reasoning={reasoning} 
+            isStreaming={isReasoningStreaming}
+            className="mb-2"
+          />
+        )}
         
         <div className={cn("text-sm leading-relaxed text-[#e8e8e8]", isOptimistic && "opacity-70")}>
             <RichMessage content={content} role={role} />
