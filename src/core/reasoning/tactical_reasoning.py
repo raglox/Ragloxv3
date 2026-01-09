@@ -282,6 +282,37 @@ class TacticalReasoningEngine:
         self.memory = operational_memory
         self.knowledge = knowledge
         self.logger = logging.getLogger("raglox.reasoning.tactical")
+        
+        # ═══════════════════════════════════════════════════════════
+        # Phase 3.5: RAG Vector Integration - Hybrid Knowledge Retrieval
+        # ═══════════════════════════════════════════════════════════
+        self._hybrid_retriever = None
+        self._vector_store = None
+        self._use_hybrid = False
+        
+        # Initialize hybrid retrieval (graceful degradation)
+        try:
+            from ..vector_knowledge import VectorKnowledgeStore
+            from ..hybrid_retriever import HybridKnowledgeRetriever
+            
+            # Try to initialize vector store
+            self._vector_store = VectorKnowledgeStore()
+            
+            # Create hybrid retriever if we have both components
+            if self.knowledge and self._vector_store:
+                self._hybrid_retriever = HybridKnowledgeRetriever(
+                    base_knowledge=self.knowledge,
+                    vector_store=self._vector_store
+                )
+                self._use_hybrid = True
+                self.logger.info("✅ Hybrid knowledge retrieval (TIER 1 + TIER 2) enabled")
+            else:
+                self.logger.warning("⚠️ Missing components for hybrid retrieval, using base knowledge only")
+                
+        except ImportError as e:
+            self.logger.warning(f"⚠️ Vector dependencies not installed, using TIER 1 only: {e}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Failed to initialize hybrid retrieval, using TIER 1 only: {e}")
     
     async def reason(
         self,
@@ -1168,13 +1199,24 @@ Be thorough, tactical, and security-conscious.
         context.knowledge_loaded = True
         
         try:
-            # 1. Enrich with RX Modules
-            context = await self._enrich_with_rx_modules(context)
+            # ═══════════════════════════════════════════════════════════
+            # Phase 3.5: Enhanced Knowledge Retrieval with Hybrid RAG
+            # ═══════════════════════════════════════════════════════════
             
-            # 2. Enrich with Nuclei Templates
-            context = await self._enrich_with_nuclei_intelligence(context)
+            # Try hybrid retrieval first (TIER 1 + TIER 2)
+            if self._use_hybrid and self._hybrid_retriever:
+                self.logger.info("Using hybrid knowledge retrieval (TIER 1 + TIER 2)")
+                context = await self._enrich_with_hybrid_retrieval(context)
+            else:
+                # Fallback to base knowledge only (TIER 1)
+                self.logger.info("Using base knowledge retrieval (TIER 1 only)")
+                # 1. Enrich with RX Modules
+                context = await self._enrich_with_rx_modules(context)
+                
+                # 2. Enrich with Nuclei Templates
+                context = await self._enrich_with_nuclei_intelligence(context)
             
-            # 3. Map MITRE ATT&CK
+            # 3. Map MITRE ATT&CK (always run)
             context = await self._enrich_with_mitre_attack(context)
             
             # 4. Update statistics
@@ -1193,6 +1235,191 @@ Be thorough, tactical, and security-conscious.
             self.logger.error(f"Error enriching context with knowledge: {e}", exc_info=True)
         
         return context
+    
+    async def _enrich_with_hybrid_retrieval(
+        self,
+        context: TacticalContext
+    ) -> TacticalContext:
+        """
+        Enhanced knowledge enrichment using Hybrid RAG (TIER 1 + TIER 2).
+        
+        Phase 3.5: This method combines fast base knowledge retrieval
+        with semantic vector search for optimal accuracy and speed.
+        
+        Strategy:
+        1. Use hybrid retriever for vulnerability-specific knowledge
+        2. Semantic search for complex multi-constraint queries
+        3. Fallback to base knowledge if vector search fails
+        
+        Returns:
+            Enriched context with knowledge from both tiers
+        """
+        
+        if not self._hybrid_retriever:
+            # Fallback to base enrichment
+            return await self._enrich_with_rx_modules(context)
+        
+        try:
+            self.logger.debug("Starting hybrid knowledge retrieval...")
+            
+            # 1. Build query from tactical context
+            query = self._build_knowledge_query(context)
+            
+            # 2. Retrieve relevant knowledge via hybrid retrieval
+            retrieval_result = await self._hybrid_retriever.retrieve(
+                query=query,
+                context={
+                    'platform': self._get_primary_platform(context),
+                    'phase': context.mission_phase.value,
+                    'vulnerabilities': [v.get('vuln_type') for v in context.vulnerabilities],
+                    'blocked_techniques': context.blocked_techniques
+                },
+                limit=30  # Enough for context, not overwhelming
+            )
+            
+            # 3. Process retrieved knowledge
+            available_modules = []
+            suggested_nuclei = []
+            
+            for result in retrieval_result.results:
+                # Categorize by type
+                doc_type = result.get('type', result.get('metadata', {}).get('type'))
+                
+                if doc_type == 'rx_module':
+                    # RX Module result
+                    available_modules.append({
+                        'rx_module_id': result.get('rx_module_id', result.get('id')),
+                        'technique_id': result.get('technique_id'),
+                        'technique_name': result.get('technique_name'),
+                        'description': result.get('description', result.get('content')),
+                        'platforms': result.get('platforms', result.get('metadata', {}).get('platforms', [])),
+                        'relevance_score': result.get('score', result.get('_hybrid_score', 0.0)),
+                        'source': 'hybrid_rag'
+                    })
+                    
+                elif doc_type == 'nuclei_template':
+                    # Nuclei Template result
+                    suggested_nuclei.append({
+                        'template_id': result.get('template_id', result.get('id')),
+                        'name': result.get('name'),
+                        'severity': result.get('severity'),
+                        'description': result.get('description', result.get('content')),
+                        'cve_id': result.get('cve_id', []),
+                        'relevance_score': result.get('score', result.get('_hybrid_score', 0.0)),
+                        'source': 'hybrid_rag'
+                    })
+            
+            # 4. Update context with retrieved knowledge
+            context.available_rx_modules = available_modules
+            context.suggested_scan_templates = suggested_nuclei
+            
+            # 5. Map modules to vulnerabilities (semantic matching)
+            for vuln in context.vulnerabilities:
+                vuln_query = self._build_vulnerability_query(vuln)
+                
+                # Quick semantic search for this specific vulnerability
+                vuln_results = await self._hybrid_retriever.retrieve(
+                    query=vuln_query,
+                    context={'type': 'rx_module'},
+                    limit=3  # Top 3 most relevant
+                )
+                
+                # Add to vulnerability
+                vuln['recommended_rx_modules'] = [
+                    r.get('rx_module_id', r.get('id'))
+                    for r in vuln_results.results
+                    if r.get('type') == 'rx_module'
+                ]
+            
+            # 6. Log performance metrics
+            self.logger.info(
+                f"Hybrid retrieval complete: "
+                f"{len(available_modules)} RX modules, "
+                f"{len(suggested_nuclei)} Nuclei templates "
+                f"via {retrieval_result.retrieval_path.value} "
+                f"in {retrieval_result.latency_ms:.1f}ms"
+            )
+            
+            return context
+            
+        except Exception as e:
+            self.logger.error(f"Hybrid retrieval failed, falling back to base knowledge: {e}")
+            # Graceful fallback
+            context = await self._enrich_with_rx_modules(context)
+            context = await self._enrich_with_nuclei_intelligence(context)
+            return context
+    
+    def _build_knowledge_query(self, context: TacticalContext) -> str:
+        """
+        Build a semantic query from tactical context.
+        
+        This creates a natural language query that captures the
+        operational situation for semantic search.
+        """
+        query_parts = []
+        
+        # Phase-based query
+        phase_queries = {
+            MissionPhase.RECONNAISSANCE: "reconnaissance techniques for network discovery",
+            MissionPhase.DISCOVERY: "vulnerability scanning and service enumeration",
+            MissionPhase.INITIAL_ACCESS: "initial access and exploitation techniques",
+            MissionPhase.POST_EXPLOITATION: "post-exploitation and privilege escalation",
+            MissionPhase.LATERAL_MOVEMENT: "lateral movement and pivoting techniques",
+        }
+        
+        if context.mission_phase in phase_queries:
+            query_parts.append(phase_queries[context.mission_phase])
+        
+        # Add platform context
+        platform = self._get_primary_platform(context)
+        if platform:
+            query_parts.append(f"for {platform}")
+        
+        # Add specific vulnerabilities
+        if context.vulnerabilities:
+            vuln_types = [v.get('vuln_type', '') for v in context.vulnerabilities[:3]]
+            if vuln_types:
+                query_parts.append(f"vulnerabilities: {', '.join(vuln_types)}")
+        
+        # Add defense context
+        if context.detected_defenses:
+            query_parts.append("with defense evasion")
+        
+        return " ".join(query_parts)
+    
+    def _build_vulnerability_query(self, vuln: Dict[str, Any]) -> str:
+        """Build a query for a specific vulnerability."""
+        parts = []
+        
+        if vuln.get('vuln_type'):
+            parts.append(vuln['vuln_type'])
+        
+        if vuln.get('service'):
+            parts.append(f"{vuln['service']} service")
+        
+        if vuln.get('platform'):
+            parts.append(f"on {vuln['platform']}")
+        
+        parts.append("exploitation techniques")
+        
+        return " ".join(parts)
+    
+    def _get_primary_platform(self, context: TacticalContext) -> Optional[str]:
+        """Get the primary platform from context."""
+        if not context.targets:
+            return None
+        
+        # Count platforms
+        platform_counts = {}
+        for target in context.targets:
+            platform = target.get('platform', target.get('os', 'unknown')).lower()
+            platform_counts[platform] = platform_counts.get(platform, 0) + 1
+        
+        # Return most common
+        if platform_counts:
+            return max(platform_counts, key=platform_counts.get)
+        
+        return None
     
     async def _enrich_with_rx_modules(
         self,
