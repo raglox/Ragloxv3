@@ -53,24 +53,18 @@ from .mission_intelligence_builder import (
     MissionIntelligenceBuilder,
 )
 
-# TODO Phase 4.0: SpecialistOrchestrator, AttackKillChainMapper, MITREMapper
-# from .specialist_orchestrator import (
-#     SpecialistOrchestrator,
-#     CoordinationPattern,
-#     OrchestrationResult
-# )
-#
-# from .attack_kill_chain import (
-#     AttackKillChainMapper,
-#     KillChainPhase,
-#     TacticalMapping
-# )
-#
-# from .mitre_mapper import (
-#     MITREAttackMapper,
-#     Tactic,
-#     Technique
-# )
+# Phase 4.0: Specialist Orchestration
+from .specialist_orchestrator import (
+    SpecialistOrchestrator,
+    CoordinationPattern,
+    OrchestrationResult,
+    MissionPhase,
+    ExecutionStrategy,
+    CoordinationTask,
+    OrchestrationPlan,
+)
+
+# TODO Phase 5.0: Attack Frameworks
 
 __all__ = [
     # Tactical Reasoning
@@ -93,10 +87,16 @@ __all__ = [
     "DefenseType",
     "create_mission_intelligence",
     
-    # TODO Phase 4.0:
-    # "SpecialistOrchestrator",
-    # "CoordinationPattern",
-    # "OrchestrationResult",
+    # Phase 4.0: Specialist Orchestration
+    "SpecialistOrchestrator",
+    "CoordinationPattern",
+    "OrchestrationResult",
+    "MissionPhase",
+    "ExecutionStrategy",
+    "CoordinationTask",
+    "OrchestrationPlan",
+    
+    # TODO Phase 5.0:
     # "AttackKillChainMapper",
     # "KillChainPhase",
     # "TacticalMapping",
