@@ -800,7 +800,7 @@ class RXModuleExecuteTool(BaseTool):
         
         try:
             # Get knowledge base
-            from ...knowledge import get_embedded_knowledge
+            from ..knowledge import get_knowledge as get_embedded_knowledge
             knowledge = get_embedded_knowledge()
             
             if not knowledge or not knowledge.is_loaded:
@@ -1043,7 +1043,7 @@ class NucleiScanTool(BaseTool):
             # Add templates
             if templates:
                 # Get template files from knowledge base
-                from ...knowledge import get_embedded_knowledge
+                from ..knowledge import get_knowledge as get_embedded_knowledge
                 knowledge = get_embedded_knowledge()
                 
                 if knowledge and knowledge.is_loaded:

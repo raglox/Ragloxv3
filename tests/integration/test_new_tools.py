@@ -68,40 +68,67 @@ class TestRXModuleExecuteTool:
     @pytest.mark.asyncio
     async def test_execute_success(self, rx_tool):
         """Test successful module execution."""
-        mock_executor = AsyncMock()
-        mock_executor.execute = AsyncMock(return_value=MagicMock(
-            exit_code=0,
-            stdout='Module executed successfully',
-            stderr=''
-        ))
+        from src.core.knowledge import RXModule, ExecutionInfo
         
-        result = await rx_tool.execute(
-            ssh_executor=mock_executor,
-            module_id='rx-t1003-001',  # Correct parameter name
-            target='192.168.1.100'
-        )
+        # Mock the knowledge base
+        mock_module = MagicMock()
+        mock_module.rx_module_id = 'rx-t1003-001'
+        mock_module.name = 'Test Module'
+        mock_module.command = 'echo test'
+        mock_module.platforms = ['windows']
+        mock_module.executor = 'powershell'
+        mock_module.technique_id = 'T1003'
         
-        assert result.success is True
-        assert result.tool_name == 'rx_execute'
+        with patch('src.core.agent.tools.get_embedded_knowledge') as mock_kb:
+            mock_kb.return_value.get_module.return_value = mock_module
+            
+            mock_executor = AsyncMock()
+            mock_executor.execute = AsyncMock(return_value=MagicMock(
+                exit_code=0,
+                stdout='Module executed successfully',
+                stderr=''
+            ))
+            
+            result = await rx_tool.execute(
+                ssh_executor=mock_executor,
+                module_id='rx-t1003-001',
+                target='192.168.1.100'
+            )
+            
+            assert result.success is True
+            assert result.tool_name == 'rx_execute'
     
     @pytest.mark.asyncio
     async def test_execute_with_variables(self, rx_tool):
         """Test execution with custom variables."""
-        mock_executor = AsyncMock()
-        mock_executor.execute = AsyncMock(return_value=MagicMock(
-            exit_code=0,
-            stdout='Success',
-            stderr=''
-        ))
+        from src.core.knowledge import RXModule, ExecutionInfo
         
-        result = await rx_tool.execute(
-            ssh_executor=mock_executor,
-            module_id='rx-t1003-001',  # Correct parameter name
-            target='192.168.1.100',
-            variables={'var1': 'value1'}
-        )
+        mock_module = MagicMock()
+        mock_module.rx_module_id = 'rx-t1003-001'
+        mock_module.name = 'Test Module'
+        mock_module.command = 'echo #{var1}'
+        mock_module.platforms = ['windows']
+        mock_module.executor = 'powershell'
+        mock_module.technique_id = 'T1003'
         
-        assert result.success is True
+        with patch('src.core.agent.tools.get_embedded_knowledge') as mock_kb:
+            mock_kb.return_value.get_module.return_value = mock_module
+            
+            mock_executor = AsyncMock()
+            mock_executor.execute = AsyncMock(return_value=MagicMock(
+                exit_code=0,
+                stdout='Success',
+                stderr=''
+            ))
+            
+            result = await rx_tool.execute(
+                ssh_executor=mock_executor,
+                module_id='rx-t1003-001',
+                target='192.168.1.100',
+                variables={'var1': 'value1'}
+            )
+            
+            assert result.success is True
     
     @pytest.mark.asyncio
     async def test_execute_failure(self, rx_tool):
