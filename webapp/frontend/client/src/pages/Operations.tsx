@@ -413,7 +413,7 @@ export default function Operations() {
             status: "completed",
             data: response,
             command: response.command,  // Pass command for terminal integration
-            output: response.output?.join("\n"),  // Pass output for terminal
+            output: Array.isArray(response.output) ? response.output.join("\n") : response.output,  // Pass output for terminal
             expanded: false,
           });
         }
