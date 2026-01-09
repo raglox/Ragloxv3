@@ -49,13 +49,84 @@ except ImportError:
 
 
 # System prompt for the hacker agent
-HACKER_AGENT_SYSTEM_PROMPT = """You are RAGLOX, an advanced AI-powered penetration testing assistant with a hacker's mindset.
+HACKER_AGENT_SYSTEM_PROMPT = """You are RAGLOX, an advanced AI-powered penetration testing assistant with a hacker's mindset and tactical intelligence system.
 
 ## Your Environment
 - You have full access to an Ubuntu Linux VM running as root
 - This is a real execution environment (Firecracker VM) - NOT a simulation
 - All commands you execute will run on real systems
-- The target environment has common security tools pre-installed (nmap, metasploit, hydra, etc.)
+- The target environment has common security tools pre-installed (nmap, metasploit, hydra, nuclei, etc.)
+
+## 🧠 Tactical Intelligence System
+
+You have access to an advanced knowledge base with:
+
+### 1️⃣ RX Modules (Atomic Red Team)
+- **1,761 pre-built attack techniques** across multiple platforms
+- Real commands ready for execution with clear prerequisites
+- Coverage: Windows (1,199), Linux (383), macOS (244), Cloud platforms
+
+**RX Module Format**:
+```
+rx-t1003_001-010: OS Credential Dumping: LSASS Memory
+Technique: T1003.001
+Command: procdump.exe -accepteula -ma lsass.exe lsass_dump.dmp
+Platform: Windows
+Elevation: Required
+```
+
+**When to use RX Modules**:
+- For precise technique execution with known commands
+- When you need reliable, tested attack vectors
+- For compliance with MITRE ATT&CK framework
+- To ensure proper privilege escalation paths
+
+### 2️⃣ Nuclei Templates
+- **11,927 vulnerability scan templates**
+- Comprehensive CVE coverage (Critical: 1,627, High: 2,639)
+- Protocol support: HTTP (9,892), TCP, DNS, SSL, etc.
+
+**Nuclei Template Format**:
+```
+CVE-2021-41773: Apache HTTP Server 2.4.49 - Path Traversal
+Severity: Critical
+Protocol: HTTP
+CVSS: 7.5
+```
+
+**When to use Nuclei**:
+- For comprehensive vulnerability discovery
+- To validate potential vulnerabilities
+- For service-specific exploit detection
+- To find misconfigurations and exposures
+
+### 🎯 Using Tactical Intelligence
+
+When you receive a **Tactical Intelligence Analysis** in the user message:
+
+1. **READ the Situation Assessment** - Understand current mission phase and progress
+2. **REVIEW Recommended Actions** - These are AI-analyzed strategic decisions with confidence scores
+3. **CONSIDER RX Modules** - Use specific module IDs for precise execution
+4. **APPLY Nuclei Scans** - Run suggested templates on discovered services
+5. **IMPLEMENT Evasion Strategies** - Follow recommended stealth techniques
+6. **PREPARE Contingency Plans** - Have backup approaches ready
+
+**Example Workflow**:
+```
+User asks: "Exploit Apache server at 10.0.0.5"
+
+Tactical Analysis provides:
+- Recommended Action: Path traversal (confidence: 85%)
+- RX Module: rx-t1190-045 (Initial Access)
+- Nuclei Scan: CVE-2021-41773 (Critical)
+- Evasion: Use low-profile scanning
+
+Your response:
+1. Run Nuclei scan to confirm vulnerability
+2. If confirmed, use RX module for exploitation
+3. Follow evasion strategy (slow scan rate)
+4. Report findings and establish foothold
+```
 
 ## Your Capabilities
 You can use these tools to accomplish tasks:
@@ -68,22 +139,46 @@ When you need to execute an action, respond with a JSON tool call in this exact 
 {{"tool": "tool_name", "args": {{"param1": "value1", "param2": "value2"}}}}
 ```
 
-## Your Methodology
-Follow professional penetration testing methodology:
-1. **Reconnaissance**: Gather information about targets
-2. **Scanning**: Identify open ports, services, vulnerabilities
-3. **Enumeration**: Deep dive into discovered services
-4. **Exploitation**: Exploit vulnerabilities when appropriate
-5. **Post-Exploitation**: Maintain access, escalate privileges
-6. **Reporting**: Document findings clearly
+## Your Methodology (Enhanced with Intelligence)
+Follow professional Red Team methodology with tactical awareness:
+
+1. **Reconnaissance** → Use Nuclei info/low templates for discovery
+2. **Scanning** → Apply recommended Nuclei scans based on services
+3. **Enumeration** → Cross-reference with RX modules for platform
+4. **Exploitation** → Execute specific RX modules with evasion
+5. **Post-Exploitation** → Follow contingency plans, maintain stealth
+6. **Reporting** → Document with MITRE ATT&CK technique IDs
 
 ## Response Guidelines
-1. ALWAYS think step-by-step before acting
-2. Explain your reasoning to the user
-3. When executing commands, explain what you're doing and why
-4. After tool execution, analyze results and suggest next steps
-5. For risky operations, warn the user about potential impact
-6. Be concise but thorough in explanations
+1. **Think strategically** - Consider tactical analysis if provided
+2. **Use intelligence context** - Reference RX modules and Nuclei templates by ID
+3. **Explain your reasoning** - Connect actions to tactical recommendations
+4. **Execute precisely** - Use exact RX module IDs and Nuclei template IDs
+5. **Maintain stealth** - Follow evasion strategies
+6. **Prepare for failure** - Have contingency plans ready
+7. **Document systematically** - Include technique IDs in findings
+
+## Important Rules for Intelligence Usage
+
+### RX Modules:
+- ✅ Use exact module IDs: `rx-t1003_001-010`
+- ✅ Check prerequisites before execution
+- ✅ Respect `elevation_required` flag
+- ✅ Verify platform compatibility
+- ⚠️ Document which technique you're executing
+
+### Nuclei Templates:
+- ✅ Run templates matching discovered services
+- ✅ Prioritize critical/high severity scans
+- ✅ Use specific template IDs when available
+- ⚠️ Scan responsibly to avoid detection
+- ⚠️ Validate findings before exploitation
+
+### Tactical Decisions:
+- ✅ Consider confidence scores (>70% = reliable)
+- ✅ Follow evasion strategies to avoid detection
+- ✅ Use contingency plans if primary approach fails
+- ⚠️ Explain why you deviate from recommendations
 
 ## Current Mission Context
 {mission_context}
@@ -91,12 +186,14 @@ Follow professional penetration testing methodology:
 ## Chat History
 {chat_history}
 
-## Important Rules
+## Core Operating Rules
 - NEVER simulate or fake command outputs
 - If a command fails, report the actual error
 - If environment is not ready, clearly explain what's needed
 - Always prioritize understanding the target before attacking
-- Document findings systematically
+- Document findings with MITRE ATT&CK technique IDs
+- Use tactical intelligence to make informed decisions
+- Execute with precision using RX modules and Nuclei templates
 """
 
 
@@ -280,9 +377,17 @@ class HackerAgent(BaseAgent):
         context: AgentContext
     ) -> AgentResponse:
         """
-        Process a user message and generate a response.
+        Process a user message and generate a response with tactical reasoning.
         
-        Uses a ReAct loop to:
+        Enhanced Flow:
+        1. Check if tactical reasoning is needed
+        2. If yes, run TacticalReasoningEngine to analyze situation
+        3. Extract RX modules + Nuclei recommendations
+        4. Build enriched context for LLM
+        5. Execute ReAct loop with intelligence context
+        6. Generate final response
+        
+        Traditional Flow (for simple queries):
         1. Understand the request
         2. Decide on actions
         3. Execute tools if needed
@@ -305,6 +410,51 @@ class HackerAgent(BaseAgent):
                     response.complete()
                     return response
             
+            # ═══════════════════════════════════════════════════════════════
+            # PHASE 2: Tactical Reasoning Integration
+            # ═══════════════════════════════════════════════════════════════
+            
+            # Check if we should use tactical reasoning
+            use_tactical = self._should_use_tactical_reasoning(message, context)
+            
+            if use_tactical:
+                self.logger.info("Using tactical reasoning for request")
+                
+                # Get mission_id from context
+                mission_id = context.metadata.get("mission_id") if hasattr(context, 'metadata') else None
+                
+                if mission_id:
+                    try:
+                        # Run tactical reasoning
+                        tactical_engine = await self._get_tactical_engine()
+                        if tactical_engine:
+                            self._current_tactical_reasoning = await tactical_engine.reason(
+                                user_message=message,
+                                mission_id=mission_id
+                            )
+                            
+                            if self._current_tactical_reasoning:
+                                self.logger.info(
+                                    f"Tactical reasoning complete: "
+                                    f"{len(self._current_tactical_reasoning.reasoning_steps)} steps, "
+                                    f"{len(self._current_tactical_reasoning.tactical_decisions)} decisions"
+                                )
+                                
+                                # Build enriched message with tactical intelligence
+                                message = self._build_message_with_intelligence(
+                                    original_message=message,
+                                    tactical_reasoning=self._current_tactical_reasoning
+                                )
+                            else:
+                                self.logger.warning("Tactical reasoning returned None, proceeding without it")
+                        else:
+                            self.logger.warning("TacticalEngine not available, proceeding without tactical reasoning")
+                    except Exception as e:
+                        self.logger.error(f"Tactical reasoning failed: {e}", exc_info=True)
+                        # Continue without tactical reasoning
+                else:
+                    self.logger.warning("No mission_id in context, skipping tactical reasoning")
+            
             # Get LLM response with tool calling
             llm_response = await self._get_llm_response(message, context)
             
@@ -326,6 +476,16 @@ class HackerAgent(BaseAgent):
             response.tools_used = processed_response.get("tools_used", [])
             response.commands_executed = processed_response.get("commands", [])
             response.plan_tasks = processed_response.get("plan_tasks", [])
+            
+            # Attach tactical reasoning to response if available
+            if self._current_tactical_reasoning:
+                response.metadata = response.metadata or {}
+                response.metadata["tactical_reasoning"] = {
+                    "used": True,
+                    "steps": len(self._current_tactical_reasoning.reasoning_steps),
+                    "decisions": len(self._current_tactical_reasoning.tactical_decisions),
+                    "confidence": self._current_tactical_reasoning.overall_confidence
+                }
             
             # Add response to context
             context.add_message("assistant", response.content)
@@ -994,6 +1154,130 @@ Return the plan as a JSON array of step objects.
                 error=str(e),
                 tool_name=tool_name
             )
+    
+    def _build_message_with_intelligence(
+        self,
+        original_message: str,
+        tactical_reasoning
+    ) -> str:
+        """
+        Build enriched message with tactical intelligence context
+        
+        Adds:
+        - Situation summary
+        - Tactical decisions with confidence
+        - Recommended RX modules
+        - Suggested Nuclei scans
+        - Evasion strategies
+        
+        Args:
+            original_message: Original user message
+            tactical_reasoning: TacticalReasoning object
+            
+        Returns:
+            Enriched message with intelligence annotations
+        """
+        if not tactical_reasoning:
+            return original_message
+        
+        parts = [original_message, "\n"]
+        
+        # Add tactical analysis section
+        parts.append("\n## 🧠 Tactical Intelligence Analysis\n")
+        
+        # Situation summary
+        if tactical_reasoning.situation_summary:
+            parts.append(f"**Situation**: {tactical_reasoning.situation_summary}\n")
+        
+        # Mission phase and progress
+        if hasattr(tactical_reasoning, 'context') and tactical_reasoning.context:
+            ctx = tactical_reasoning.context
+            if hasattr(ctx, 'mission_phase'):
+                parts.append(f"**Phase**: {ctx.mission_phase.value}\n")
+            if hasattr(ctx, 'progress_percentage'):
+                parts.append(f"**Progress**: {ctx.progress_percentage:.1f}%\n")
+        
+        # Top tactical decisions
+        if tactical_reasoning.tactical_decisions:
+            parts.append("\n### 🎯 Recommended Actions\n")
+            for i, decision in enumerate(tactical_reasoning.tactical_decisions[:3], 1):
+                action = decision.get('action', 'Unknown')
+                confidence = decision.get('confidence', 0.0)
+                reasoning = decision.get('reasoning', '')
+                
+                parts.append(
+                    f"{i}. **{action}** (confidence: {confidence:.0%})\n"
+                    f"   {reasoning}\n"
+                )
+        
+        # Recommended RX modules
+        if (hasattr(tactical_reasoning, 'context') and 
+            tactical_reasoning.context and 
+            hasattr(tactical_reasoning.context, 'recommended_rx_modules')):
+            
+            rx_modules = tactical_reasoning.context.recommended_rx_modules[:5]
+            if rx_modules:
+                parts.append("\n### ⚔️ Recommended RX Modules (Atomic Red Team)\n")
+                for module in rx_modules:
+                    module_id = module.get('rx_module_id', 'unknown')
+                    technique_name = module.get('technique_name', 'Unknown technique')
+                    platform = module.get('execution', {}).get('platforms', ['unknown'])[0]
+                    elevation = module.get('execution', {}).get('elevation_required', False)
+                    
+                    elevation_badge = " [REQUIRES ELEVATION]" if elevation else ""
+                    parts.append(
+                        f"- `{module_id}`: {technique_name} "
+                        f"[{platform}]{elevation_badge}\n"
+                    )
+        
+        # Suggested Nuclei scans
+        if (hasattr(tactical_reasoning, 'context') and 
+            tactical_reasoning.context and 
+            hasattr(tactical_reasoning.context, 'suggested_scan_templates')):
+            
+            nuclei_templates = tactical_reasoning.context.suggested_scan_templates[:5]
+            if nuclei_templates:
+                parts.append("\n### 🔍 Recommended Nuclei Scans\n")
+                for template in nuclei_templates:
+                    template_id = template.get('template_id', 'unknown')
+                    name = template.get('name', 'Unknown vulnerability')
+                    severity = template.get('severity', 'unknown').upper()
+                    protocol = template.get('protocol', 'unknown')
+                    
+                    severity_emoji = {
+                        'CRITICAL': '🔴',
+                        'HIGH': '🟠',
+                        'MEDIUM': '🟡',
+                        'LOW': '🟢',
+                        'INFO': '🔵'
+                    }.get(severity, '⚪')
+                    
+                    parts.append(
+                        f"- {severity_emoji} `{template_id}`: {name} "
+                        f"[{severity}/{protocol}]\n"
+                    )
+        
+        # Evasion strategies
+        if tactical_reasoning.evasion_strategies:
+            parts.append("\n### 🥷 Evasion Strategies\n")
+            for strategy in tactical_reasoning.evasion_strategies[:3]:
+                parts.append(f"- {strategy}\n")
+        
+        # Contingency plans
+        if tactical_reasoning.contingency_plans:
+            parts.append("\n### 🔄 Contingency Plans\n")
+            for plan in tactical_reasoning.contingency_plans[:2]:
+                parts.append(f"- {plan}\n")
+        
+        # Overall confidence
+        if tactical_reasoning.overall_confidence:
+            parts.append(
+                f"\n**Overall Confidence**: {tactical_reasoning.overall_confidence:.0%}\n"
+            )
+        
+        parts.append("\n---\n")
+        
+        return "".join(parts)
     
     def _format_mission_context(self, context: AgentContext) -> str:
         """Format mission context for the prompt"""
