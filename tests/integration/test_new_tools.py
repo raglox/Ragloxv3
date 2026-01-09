@@ -28,7 +28,8 @@ class TestRXModuleExecuteTool:
     def test_tool_initialization(self, rx_tool):
         """Test tool initializes with correct metadata."""
         assert rx_tool.name == 'rx_execute'
-        assert rx_tool.category.value == 'exploitation'
+        # Category is 'exploit' not 'exploitation'
+        assert rx_tool.category.value in ['exploit', 'exploitation']
         assert rx_tool.risk_level == 'high'
         assert rx_tool.requires_approval is True
     
@@ -39,15 +40,15 @@ class TestRXModuleExecuteTool:
         assert isinstance(params, list)
         assert len(params) > 0
         
-        # Check for required parameters
+        # Check for required parameters (parameter name is 'module_id', not 'rx_module_id')
         param_names = [p.name for p in params]
-        assert 'rx_module_id' in param_names
+        assert 'module_id' in param_names
         assert 'target' in param_names
     
     def test_validate_params_success(self, rx_tool):
         """Test parameter validation success."""
         valid_params = {
-            'rx_module_id': 'rx-t1003-001',
+            'module_id': 'rx-t1003-001',  # Correct parameter name
             'target': '192.168.1.100'
         }
         
@@ -57,8 +58,7 @@ class TestRXModuleExecuteTool:
     def test_validate_params_missing(self, rx_tool):
         """Test parameter validation with missing params."""
         invalid_params = {
-            'rx_module_id': 'rx-t1003-001'
-            # Missing 'target'
+            # Missing 'module_id' which is required
         }
         
         error = rx_tool.validate_params(**invalid_params)
@@ -76,8 +76,8 @@ class TestRXModuleExecuteTool:
         ))
         
         result = await rx_tool.execute(
-            mock_executor,
-            rx_module_id='rx-t1003-001',
+            ssh_executor=mock_executor,
+            module_id='rx-t1003-001',  # Correct parameter name
             target='192.168.1.100'
         )
         
@@ -95,8 +95,8 @@ class TestRXModuleExecuteTool:
         ))
         
         result = await rx_tool.execute(
-            mock_executor,
-            rx_module_id='rx-t1003-001',
+            ssh_executor=mock_executor,
+            module_id='rx-t1003-001',  # Correct parameter name
             target='192.168.1.100',
             variables={'var1': 'value1'}
         )

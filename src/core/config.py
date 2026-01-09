@@ -738,7 +738,7 @@ class Settings(BaseSettings):
     @classmethod
     def validate_llm_provider(cls, v: str) -> str:
         """Validate LLM provider."""
-        valid_providers = {"openai", "blackbox", "local", "mock", "anthropic"}
+        valid_providers = {"openai", "blackbox", "local", "mock", "anthropic", "deepseek"}
         if v.lower() not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {v}. Must be one of {valid_providers}")
         return v.lower()
