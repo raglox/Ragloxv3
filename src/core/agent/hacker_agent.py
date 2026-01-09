@@ -829,7 +829,7 @@ Return the plan as a JSON array of step objects.
         """
         tools = []
         
-        for tool in self.tool_registry.get_all_tools():
+        for tool in self.tool_registry.list_tools():
             # Get tool schema (already in OpenAI format from BaseTool.get_schema())
             schema = tool.get_schema()
             

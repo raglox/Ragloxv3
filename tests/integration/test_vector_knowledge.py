@@ -358,3 +358,234 @@ class TestVectorKnowledgeStore:
         assert isinstance(results, list)
         # Empty query embedding is still valid, so we may get results
         assert len(results) <= 5
+    
+    @pytest.mark.asyncio
+    async def test_search_with_min_score(self, temp_data_dir):
+        """Test search with minimum score threshold."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        await store.initialize()
+        
+        # Search with high min_score should filter results
+        results = await store.semantic_search("test query", limit=10, min_score=0.9)
+        assert isinstance(results, list)
+        # All results should have score >= min_score (note: FAISS uses L2 distance)
+    
+    @pytest.mark.asyncio
+    async def test_is_available_property(self, temp_data_dir):
+        """Test is_available property."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        assert store.is_available() is False
+        
+        await store.initialize()
+        assert store.is_available() is True
+    
+    @pytest.mark.asyncio
+    async def test_vector_search_result_to_dict(self):
+        """Test VectorSearchResult to_dict method."""
+        from src.core.vector_knowledge import VectorSearchResult
+        
+        result = VectorSearchResult(
+            document_id='test-001',
+            content='Test content',
+            score=0.95,
+            metadata={'key': 'value'}
+        )
+        
+        result_dict = result.to_dict()
+        assert result_dict['document_id'] == 'test-001'
+        assert result_dict['content'] == 'Test content'
+        assert result_dict['score'] == 0.95
+        assert result_dict['metadata'] == {'key': 'value'}
+    
+    @pytest.mark.asyncio
+    async def test_load_model_lazy(self, temp_data_dir):
+        """Test lazy model loading."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        
+        # Before initialization, model should be None
+        assert store._model is None
+        
+        await store.initialize()
+        
+        # After initialization but before first search, model might be loaded
+        # This is fine - we just test that searching works
+        await store.semantic_search("test", limit=1)
+        
+        # After search, model must be loaded
+        assert store._model is not None
+    
+    @pytest.mark.asyncio
+    async def test_batch_search_empty_queries(self, temp_data_dir):
+        """Test batch search with empty query list."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        await store.initialize()
+        
+        results = await store.batch_search([], limit=5)
+        assert results == []
+    
+    @pytest.mark.asyncio
+    async def test_cache_disabled(self, temp_data_dir):
+        """Test with cache disabled."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir), use_cache=False)
+        await store.initialize()
+        
+        # Multiple searches should work even without cache
+        results1 = await store.semantic_search("test", limit=3)
+        results2 = await store.semantic_search("test", limit=3)
+        
+        assert isinstance(results1, list)
+        assert isinstance(results2, list)
+    
+    @pytest.mark.asyncio
+    async def test_search_with_filters_no_match(self, temp_data_dir):
+        """Test search with filters that don't match."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        await store.initialize()
+        
+        # Search with filter that doesn't match any documents
+        results = await store.semantic_search(
+            "test query",
+            limit=10,
+            filters={'platforms': ['nonexistent_platform']}
+        )
+        
+        # Should return empty or very few results
+        assert isinstance(results, list)
+    
+    @pytest.mark.asyncio
+    async def test_large_limit(self, temp_data_dir):
+        """Test search with limit larger than total documents."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        await store.initialize()
+        
+        # Request more results than exist
+        results = await store.semantic_search("test", limit=1000)
+        
+        # Should return at most 10 (total documents)
+        assert isinstance(results, list)
+        assert len(results) <= 10
+    
+    @pytest.mark.asyncio
+    async def test_hybrid_search_with_empty_keyword_results(self, temp_data_dir):
+        """Test hybrid search with empty keyword results."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        await store.initialize()
+        
+        # Hybrid search with empty keyword results (vector only)
+        results = await store.hybrid_search(
+            "test query",
+            keyword_results=[],
+            limit=5,
+            vector_weight=0.7
+        )
+        
+        assert isinstance(results, list)
+    
+    @pytest.mark.asyncio
+    async def test_stats_before_init(self):
+        """Test get_stats before initialization."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        import tempfile
+        
+        store = VectorKnowledgeStore(data_path=tempfile.mkdtemp())
+        stats = store.get_stats()
+        
+        assert stats['initialized'] is False
+        assert stats['total_documents'] == 0
+    
+    @pytest.mark.asyncio
+    async def test_multiple_batch_searches(self, temp_data_dir):
+        """Test multiple batch searches."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        await store.initialize()
+        
+        # Run batch search multiple times
+        queries1 = ["query1", "query2"]
+        queries2 = ["query3", "query4", "query5"]
+        
+        results1 = await store.batch_search(queries1, limit=3)
+        results2 = await store.batch_search(queries2, limit=3)
+        
+        assert len(results1) == 2
+        assert len(results2) == 3
+    
+    @pytest.mark.asyncio
+    async def test_search_with_very_low_min_score(self, temp_data_dir):
+        """Test search with very low min_score (accepts all)."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        await store.initialize()
+        
+        # Very low min_score should return many results
+        results = await store.semantic_search("test", limit=10, min_score=0.0)
+        
+        assert isinstance(results, list)
+        assert len(results) > 0
+    
+    @pytest.mark.asyncio
+    async def test_init_with_custom_model(self, temp_data_dir):
+        """Test initialization with custom model name."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        # Use default model
+        store = VectorKnowledgeStore(
+            data_path=str(temp_data_dir),
+            model_name='sentence-transformers/all-MiniLM-L6-v2'
+        )
+        await store.initialize()
+        
+        assert store.is_available() is True
+    
+    @pytest.mark.asyncio
+    async def test_repeated_initialization(self, temp_data_dir):
+        """Test repeated initialization calls."""
+        from src.core.vector_knowledge import VectorKnowledgeStore
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        
+        # Initialize multiple times
+        result1 = await store.initialize()
+        result2 = await store.initialize()
+        result3 = await store.initialize()
+        
+        assert result1 is True
+        assert result2 is True
+        assert result3 is True
+    
+    @pytest.mark.asyncio
+    async def test_search_returns_correct_structure(self, temp_data_dir):
+        """Test that search results have correct structure."""
+        from src.core.vector_knowledge import VectorKnowledgeStore, VectorSearchResult
+        
+        store = VectorKnowledgeStore(data_path=str(temp_data_dir))
+        await store.initialize()
+        
+        results = await store.semantic_search("credential dumping", limit=3)
+        
+        assert isinstance(results, list)
+        for result in results:
+            assert isinstance(result, VectorSearchResult)
+            assert hasattr(result, 'document_id')
+            assert hasattr(result, 'content')
+            assert hasattr(result, 'score')
+            assert hasattr(result, 'metadata')
+            assert isinstance(result.metadata, dict)

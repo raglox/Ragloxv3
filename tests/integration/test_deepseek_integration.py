@@ -115,6 +115,8 @@ async def test_hacker_agent_with_deepseek():
     # Create context
     context = AgentContext(
         mission_id="test-mission",
+        user_id="test-user",
+        organization_id="test-org",
         chat_history=[]
     )
     context.vm_status = "ready"
@@ -189,7 +191,12 @@ async def test_agent_streaming():
     mock_llm.stream_generate = mock_stream
     
     agent = HackerAgent(llm_service=mock_llm)
-    context = AgentContext(mission_id="test", chat_history=[])
+    context = AgentContext(
+        mission_id="test",
+        user_id="test-user",
+        organization_id="test-org",
+        chat_history=[]
+    )
     context.vm_status = "ready"
     
     # Collect streamed chunks

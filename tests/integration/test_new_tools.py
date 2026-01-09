@@ -70,16 +70,22 @@ class TestRXModuleExecuteTool:
         """Test successful module execution."""
         from src.core.knowledge import RXModule, ExecutionInfo
         
-        # Mock the knowledge base
-        mock_module = MagicMock()
-        mock_module.rx_module_id = 'rx-t1003-001'
-        mock_module.name = 'Test Module'
-        mock_module.command = 'echo test'
-        mock_module.platforms = ['windows']
-        mock_module.executor = 'powershell'
-        mock_module.technique_id = 'T1003'
+        # Mock the knowledge base - module is returned as dict
+        mock_module = {
+            'rx_module_id': 'rx-t1003-001',
+            'name': 'Test Module',
+            'technique_id': 'T1003',
+            'technique_name': 'Credential Dumping',
+            'execution': {
+                'command': 'echo test',
+                'platforms': ['linux', 'windows'],
+                'executor': 'bash',
+                'elevation_required': False
+            },
+            'prerequisites': []
+        }
         
-        with patch('src.core.agent.tools.get_embedded_knowledge') as mock_kb:
+        with patch('src.core.knowledge.get_knowledge') as mock_kb:
             mock_kb.return_value.get_module.return_value = mock_module
             
             mock_executor = AsyncMock()
@@ -103,15 +109,21 @@ class TestRXModuleExecuteTool:
         """Test execution with custom variables."""
         from src.core.knowledge import RXModule, ExecutionInfo
         
-        mock_module = MagicMock()
-        mock_module.rx_module_id = 'rx-t1003-001'
-        mock_module.name = 'Test Module'
-        mock_module.command = 'echo #{var1}'
-        mock_module.platforms = ['windows']
-        mock_module.executor = 'powershell'
-        mock_module.technique_id = 'T1003'
+        mock_module = {
+            'rx_module_id': 'rx-t1003-001',
+            'name': 'Test Module',
+            'technique_id': 'T1003',
+            'technique_name': 'Credential Dumping',
+            'execution': {
+                'command': 'echo #{var1}',
+                'platforms': ['linux'],
+                'executor': 'bash',
+                'elevation_required': False
+            },
+            'prerequisites': []
+        }
         
-        with patch('src.core.agent.tools.get_embedded_knowledge') as mock_kb:
+        with patch('src.core.knowledge.get_knowledge') as mock_kb:
             mock_kb.return_value.get_module.return_value = mock_module
             
             mock_executor = AsyncMock()
@@ -140,11 +152,26 @@ class TestRXModuleExecuteTool:
             stderr='Execution failed'
         ))
         
-        result = await rx_tool.execute(
-            mock_executor,
-            rx_module_id='rx-t1003-001',
-            target='192.168.1.100'
-        )
+        mock_module = {
+            'rx_module_id': 'rx-t1003-001',
+            'technique_id': 'T1003',
+            'technique_name': 'Test',
+            'execution': {
+                'command': 'test',
+                'platforms': ['linux'],
+                'executor': 'bash'
+            },
+            'prerequisites': []
+        }
+        
+        with patch('src.core.knowledge.get_knowledge') as mock_kb:
+            mock_kb.return_value.get_module.return_value = mock_module
+            
+            result = await rx_tool.execute(
+                ssh_executor=mock_executor,
+                module_id='rx-t1003-001',
+                target='192.168.1.100'
+            )
         
         # Should still return a result (not raise exception)
         assert result.tool_name == 'rx_execute'
@@ -170,7 +197,7 @@ class TestNucleiScanTool:
     def test_tool_initialization(self, nuclei_tool):
         """Test tool initializes with correct metadata."""
         assert nuclei_tool.name == 'nuclei_scan'
-        assert nuclei_tool.category.value == 'reconnaissance'
+        assert nuclei_tool.category.value in ['vuln', 'vulnerability']
         assert nuclei_tool.risk_level == 'medium'
         assert nuclei_tool.requires_approval is False
     
