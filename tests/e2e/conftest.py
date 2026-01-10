@@ -1,539 +1,564 @@
-# ═══════════════════════════════════════════════════════════════
-# RAGLOX v3.0 - E2E Test Fixtures (Enterprise-Grade)
-# Shared fixtures for E2E testing with real services
-# ═══════════════════════════════════════════════════════════════
-
 """
-Enterprise-Grade E2E Test Fixtures
+RAGLOX v3.0 - Phase 5.2 End-to-End Integration Testing
+Pytest Configuration and Shared Fixtures
 
-Provides real service connections for comprehensive testing:
-- PostgreSQL database
-- Redis cache
-- Blackboard
-- Specialists
-- Mission Intelligence
-- Orchestration
-
-Requirements:
-- PostgreSQL running on localhost:5432
-- Redis running on localhost:6379
-- Valid credentials in environment variables
+This module provides:
+- Common test fixtures for E2E tests
+- Helper functions for mission lifecycle
+- Mock/stub utilities for external services
+- Test data generators
+- Assertion helpers
 """
 
-import asyncio
 import pytest
+import asyncio
+import uuid
 import os
-from typing import AsyncGenerator, Dict, Any
-from uuid import uuid4
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+from pathlib import Path
 
-# Import RAGLOX components
+# RAGLOX Core
+from src.core.workflow_orchestrator import AgentWorkflowOrchestrator
 from src.core.blackboard import Blackboard
-from src.core.config import Settings, get_settings
+from src.core.knowledge import EmbeddedKnowledge
 from src.core.models import (
     Mission, MissionStatus, MissionCreate,
-    Target, TargetStatus,
-    Vulnerability, Severity,
-    Credential, CredentialType, PrivilegeLevel,
+    WorkflowPhase, PhaseStatus, PhaseResult,
+    TaskStatus, SpecialistType, TaskType,
+    GoalStatus
 )
-from src.core.reasoning import (
-    MissionIntelligence,
-    MissionIntelligenceBuilder,
-    SpecialistOrchestrator,
-    create_mission_intelligence,
-)
-from src.core.planning import MissionPlanner
-from src.core.advanced import (
-    AdvancedRiskAssessmentEngine,
-    RealtimeAdaptationEngine,
-    IntelligentTaskPrioritizer,
-    VisualizationDashboardAPI,
-)
-
-# Check if real services are available
-REAL_SERVICES_AVAILABLE = os.getenv("USE_REAL_SERVICES", "false").lower() == "true"
-POSTGRES_AVAILABLE = os.getenv("POSTGRES_AVAILABLE", "false").lower() == "true"
-REDIS_AVAILABLE = os.getenv("REDIS_AVAILABLE", "false").lower() == "true"
+from src.core.config import get_settings, Settings
 
 
-# ═══════════════════════════════════════════════════════════════
-# Service Check Fixtures
-# ═══════════════════════════════════════════════════════════════
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PYTEST CONFIGURATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@pytest.fixture(scope="session")
-def check_services():
-    """Check if real services are available."""
-    services = {
-        "postgres": POSTGRES_AVAILABLE,
-        "redis": REDIS_AVAILABLE,
-        "all": REAL_SERVICES_AVAILABLE,
-    }
-    
-    if not REAL_SERVICES_AVAILABLE:
-        pytest.skip("Real services not enabled. Set USE_REAL_SERVICES=true to run E2E tests.")
-    
-    return services
-
-
-# ═══════════════════════════════════════════════════════════════
-# Configuration Fixtures
-# ═══════════════════════════════════════════════════════════════
-
-@pytest.fixture(scope="session")
-def e2e_settings() -> Settings:
-    """Get settings for E2E tests."""
-    settings = get_settings()
-    
-    # Ensure we're using real services
-    assert settings.database_url, "DATABASE_URL must be set for E2E tests"
-    assert settings.redis_url, "REDIS_URL must be set for E2E tests"
-    
-    return settings
-
-
-# ═══════════════════════════════════════════════════════════════
-# Core Service Fixtures
-# ═══════════════════════════════════════════════════════════════
-
-@pytest.fixture(scope="function")
-async def redis_client(e2e_settings: Settings, check_services):
-    """
-    Provide a Redis client for E2E tests.
-    """
-    import redis.asyncio as aioredis
-    client = await aioredis.from_url(
-        e2e_settings.redis_url,
-        encoding="utf-8",
-        decode_responses=True
+def pytest_configure(config):
+    """Configure pytest with custom markers."""
+    config.addinivalue_line(
+        "markers", "e2e: mark test as end-to-end integration test"
     )
-    
-    try:
-        yield client
-    finally:
-        await client.close()
+    config.addinivalue_line(
+        "markers", "easy: mark test as easy difficulty level"
+    )
+    config.addinivalue_line(
+        "markers", "medium: mark test as medium difficulty level"
+    )
+    config.addinivalue_line(
+        "markers", "hard: mark test as hard difficulty level"
+    )
+    config.addinivalue_line(
+        "markers", "expert: mark test as expert difficulty level"
+    )
+    config.addinivalue_line(
+        "markers", "slow: mark test as slow-running (>60s)"
+    )
+    config.addinivalue_line(
+        "markers", "real_llm: mark test as requiring real LLM API (DeepSeek)"
+    )
+    config.addinivalue_line(
+        "markers", "real_infra: mark test as requiring real infrastructure (Docker/VMs)"
+    )
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CORE FIXTURES
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create event loop for async tests."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest.fixture(scope="function")
-async def database_conn(e2e_settings: Settings, check_services):
-    """
-    Provide a database connection for E2E tests.
-    
-    For now, we're just providing None as the codebase doesn't use
-    a direct database connection - it uses Redis/Blackboard for state.
-    """
-    # TODO: Add actual database connection if needed
-    yield None
+async def settings() -> Settings:
+    """Get RAGLOX settings."""
+    return get_settings()
 
 
 @pytest.fixture(scope="function")
-async def blackboard(e2e_settings: Settings, check_services) -> AsyncGenerator[Blackboard, None]:
-    """
-    Provide a real Blackboard instance connected to PostgreSQL and Redis.
+async def blackboard(settings: Settings) -> Blackboard:
+    """Create and connect to Blackboard (Redis)."""
+    bb = Blackboard(settings)
+    await bb.connect()
+    print(f"✅ Blackboard connected: {settings.redis_url}")
     
-    This is a function-scoped fixture, so each test gets a fresh Blackboard.
-    """
-    bb = Blackboard(settings=e2e_settings)
+    yield bb
     
+    # Cleanup
     try:
-        # Connect to Redis
-        await bb.connect()
-        
-        yield bb
-    finally:
-        # Cleanup
         await bb.disconnect()
+        print("✅ Blackboard disconnected")
+    except:
+        pass
 
 
 @pytest.fixture(scope="function")
-async def test_mission(blackboard: Blackboard) -> Mission:
-    """Create a test mission with real data."""
-    from src.core.models import Mission
-    from uuid import uuid4
-    from datetime import datetime
+async def knowledge() -> EmbeddedKnowledge:
+    """Load knowledge base."""
+    kb = EmbeddedKnowledge()
+    kb.load()
+    print(f"✅ Knowledge Base loaded: {kb.stats.total_rx_modules} modules")
     
-    mission = Mission(
-        id=uuid4(),
-        name=f"E2E Test Mission {uuid4().hex[:8]}",
-        description="Enterprise-grade E2E test mission",
-        status=MissionStatus.CREATED,
-        scope=["192.168.1.0/24", "10.0.0.0/24"],
-        goals={"gain_access": "pending", "privilege_escalation": "pending", "lateral_movement": "pending"},
-        constraints={
-            "max_duration_hours": 2,
-            "stealth_level": "high",
-            "allowed_techniques": ["exploit", "password_spray"],
-        },
-        created_at=datetime.utcnow()
-    )
-    
-    # Store in blackboard
-    await blackboard.create_mission(mission)
-    
-    return mission
-
-
-# ═══════════════════════════════════════════════════════════════
-# Intelligence Fixtures
-# ═══════════════════════════════════════════════════════════════
-
-@pytest.fixture(scope="function")
-async def mission_intelligence(
-    test_mission: Mission,
-    blackboard: Blackboard
-) -> MissionIntelligence:
-    """Create MissionIntelligence with real data."""
-    intel = create_mission_intelligence(test_mission.id)
-    
-    # Add some test targets
-    from src.core.reasoning.mission_intelligence import TargetIntel
-    
-    target1 = TargetIntel(
-        target_id=f"target-{uuid4()}",
-        ip="192.168.1.10",
-        hostname="web-server-01",
-        os="Linux",
-        os_version="Ubuntu 22.04",
-        open_ports=[
-            {"port": 22, "protocol": "tcp", "service": "ssh", "version": "OpenSSH 8.2"},
-            {"port": 80, "protocol": "tcp", "service": "http", "version": "nginx 1.18"},
-            {"port": 443, "protocol": "tcp", "service": "https", "version": "nginx 1.18"},
-        ],
-        subnet="192.168.1.0/24",
-        hardening_level="medium",
-    )
-    
-    target2 = TargetIntel(
-        target_id=f"target-{uuid4()}",
-        ip="192.168.1.20",
-        hostname="db-server-01",
-        os="Linux",
-        os_version="Ubuntu 22.04",
-        open_ports=[
-            {"port": 22, "protocol": "tcp", "service": "ssh", "version": "OpenSSH 8.2"},
-            {"port": 3306, "protocol": "tcp", "service": "mysql", "version": "MySQL 8.0"},
-        ],
-        subnet="192.168.1.0/24",
-        hardening_level="high",
-        security_products=["fail2ban", "iptables"],
-    )
-    
-    intel.add_target(target1)
-    intel.add_target(target2)
-    
-    # Add vulnerabilities
-    from src.core.reasoning.mission_intelligence import VulnerabilityIntel
-    
-    vuln1 = VulnerabilityIntel(
-        vuln_id="CVE-2024-1234",
-        target_id=target1.target_id,
-        name="Critical RCE in nginx",
-        description="Remote code execution vulnerability",
-        severity="critical",
-        cvss_score=9.8,
-        is_exploitable=True,
-        exploit_available=True,
-        exploit_complexity="low",
-        affected_service="nginx",
-        affected_port=80,
-    )
-    
-    vuln2 = VulnerabilityIntel(
-        vuln_id="CVE-2024-5678",
-        target_id=target2.target_id,
-        name="SQL Injection in MySQL",
-        severity="high",
-        cvss_score=8.5,
-        is_exploitable=True,
-        exploit_available=False,
-        exploit_complexity="medium",
-        affected_service="mysql",
-        affected_port=3306,
-    )
-    
-    intel.add_vulnerability(vuln1)
-    intel.add_vulnerability(vuln2)
-    
-    # Add credentials
-    from src.core.reasoning.mission_intelligence import CredentialIntel
-    
-    cred1 = CredentialIntel(
-        cred_id=f"cred-{uuid4()}",
-        username="admin",
-        credential_type="password",
-        privilege_level="admin",
-        is_privileged=True,
-        is_valid=True,
-        source_target=target1.target_id,
-    )
-    
-    intel.add_credential(cred1)
-    
-    return intel
+    return kb
 
 
 @pytest.fixture(scope="function")
-async def intelligence_builder(
-    test_mission: Mission,
+async def orchestrator(
+    settings: Settings,
     blackboard: Blackboard,
-    mission_intelligence: MissionIntelligence
-) -> MissionIntelligenceBuilder:
-    """Create MissionIntelligenceBuilder with real Blackboard."""
-    builder = MissionIntelligenceBuilder(
-        mission_id=test_mission.id,
+    knowledge: EmbeddedKnowledge
+) -> AgentWorkflowOrchestrator:
+    """Create AgentWorkflowOrchestrator instance."""
+    orch = AgentWorkflowOrchestrator(
+        settings=settings,
         blackboard=blackboard,
+        knowledge=knowledge
     )
+    print(f"✅ Orchestrator initialized")
     
-    # Pre-populate with existing intelligence
-    builder.intelligence = mission_intelligence
-    
-    return builder
+    return orch
 
-
-# ═══════════════════════════════════════════════════════════════
-# Orchestration Fixtures
-# ═══════════════════════════════════════════════════════════════
 
 @pytest.fixture(scope="function")
-async def specialist_orchestrator(
-    test_mission: Mission,
+async def environment(
+    orchestrator: AgentWorkflowOrchestrator,
     blackboard: Blackboard,
-    mission_intelligence: MissionIntelligence
-) -> SpecialistOrchestrator:
-    """Create SpecialistOrchestrator with real services."""
-    from src.specialists.recon import ReconSpecialist
-    from src.specialists.attack import AttackSpecialist
-    from src.core.models import SpecialistType
+    knowledge: EmbeddedKnowledge,
+    settings: Settings
+) -> Dict[str, Any]:
+    """Complete E2E test environment."""
+    return {
+        'orchestrator': orchestrator,
+        'blackboard': blackboard,
+        'knowledge': knowledge,
+        'settings': settings
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MISSION DATA FIXTURES
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@pytest.fixture
+def easy_mission_data() -> Dict[str, Any]:
+    """Mission data for easy web reconnaissance."""
+    return {
+        "name": "Mission 01 [EASY]: Web Recon",
+        "description": "Basic web server reconnaissance and XSS exploitation",
+        "scope": ["192.168.1.100"],
+        "goals": {
+            "Port Scanning Complete": GoalStatus.PENDING,
+            "Web Service Identified": GoalStatus.PENDING,
+            "XSS Vulnerability Found": GoalStatus.PENDING,
+            "XSS Exploitation Successful": GoalStatus.PENDING
+        },
+        "constraints": {
+            "stealth_level": "low",
+            "max_duration_hours": 1,
+            "require_approval": False
+        }
+    }
+
+
+@pytest.fixture
+def medium_mission_data() -> Dict[str, Any]:
+    """Mission data for medium SQL injection."""
+    return {
+        "name": "Mission 02 [MEDIUM]: SQL Injection",
+        "description": "SQL injection exploitation and data exfiltration",
+        "scope": ["192.168.1.200"],
+        "goals": {
+            "SQL Injection Found": GoalStatus.PENDING,
+            "Database Access Obtained": GoalStatus.PENDING,
+            "Admin Credentials Extracted": GoalStatus.PENDING,
+            "Database Schema Mapped": GoalStatus.PENDING
+        },
+        "constraints": {
+            "stealth_level": "medium",
+            "max_duration_hours": 1,
+            "require_approval": False
+        }
+    }
+
+
+@pytest.fixture
+def hard_mission_data() -> Dict[str, Any]:
+    """Mission data for hard pivot attack."""
+    return {
+        "name": "Mission 03 [HARD]: Multi-Stage Pivot",
+        "description": "Multi-stage attack with pivot and lateral movement",
+        "scope": ["192.168.100.10", "10.10.0.0/24"],
+        "goals": {
+            "Initial RCE on Web Server": GoalStatus.PENDING,
+            "Privilege Escalation to Root": GoalStatus.PENDING,
+            "Pivot to Internal Network": GoalStatus.PENDING,
+            "Compromise Database Server": GoalStatus.PENDING,
+            "Access File Server (SMB)": GoalStatus.PENDING,
+            "Obtain Domain Admin Credentials": GoalStatus.PENDING
+        },
+        "constraints": {
+            "stealth_level": "medium",
+            "max_duration_hours": 2,
+            "require_approval": False
+        }
+    }
+
+
+@pytest.fixture
+def expert_mission_data() -> Dict[str, Any]:
+    """Mission data for expert AD takeover."""
+    return {
+        "name": "Mission 04 [EXPERT]: Active Directory Takeover",
+        "description": "Full Active Directory domain compromise with Golden Ticket",
+        "scope": ["192.168.200.50", "corp.local", "10.20.0.0/24"],
+        "goals": {
+            "Initial Foothold on Domain Machine": GoalStatus.PENDING,
+            "Active Directory Enumeration": GoalStatus.PENDING,
+            "Kerberoasting Attack Success": GoalStatus.PENDING,
+            "Service Account Compromise": GoalStatus.PENDING,
+            "Lateral Movement (3+ Systems)": GoalStatus.PENDING,
+            "Domain Admin Privileges": GoalStatus.PENDING,
+            "DCSync Attack Execution": GoalStatus.PENDING,
+            "Golden Ticket Generation": GoalStatus.PENDING,
+            "Persistence Mechanism Established": GoalStatus.PENDING
+        },
+        "constraints": {
+            "stealth_level": "high",
+            "max_duration_hours": 3,
+            "require_approval": False
+        }
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HELPER FUNCTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def create_mission(mission_data: Dict[str, Any]) -> Mission:
+    """Create a Mission object from test data."""
+    return Mission(
+        id=uuid.uuid4(),
+        name=mission_data["name"],
+        description=mission_data.get("description", ""),
+        status=MissionStatus.CREATED,
+        scope=mission_data["scope"],
+        goals=mission_data["goals"],
+        constraints=mission_data.get("constraints", {})
+    )
+
+
+def create_target(
+    ip: str,
+    hostname: Optional[str] = None,
+    os: Optional[str] = None,
+    ports: Optional[List[Dict]] = None,
+    vulnerabilities: Optional[List[str]] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Create a target dictionary."""
+    target = {
+        "id": str(uuid.uuid4()),
+        "ip": ip,
+        "hostname": hostname or f"host-{ip.replace('.', '-')}",
+        "os": os or "Unknown",
+        "ports": ports or [],
+        "vulnerabilities": vulnerabilities or [],
+    }
+    target.update(kwargs)
+    return target
+
+
+def create_session(
+    target_ip: str,
+    user: str,
+    session_type: str = "reverse_shell",
+    privileges: str = "low",
+    **kwargs
+) -> Dict[str, Any]:
+    """Create a session dictionary."""
+    session = {
+        "id": f"session-{str(uuid.uuid4())[:8]}",
+        "target_ip": target_ip,
+        "type": session_type,
+        "user": user,
+        "privileges": privileges,
+        "stability": "stable",
+    }
+    session.update(kwargs)
+    return session
+
+
+def create_credential(
+    username: str,
+    password: str,
+    cred_type: str = "password",
+    **kwargs
+) -> Dict[str, Any]:
+    """Create a credential dictionary."""
+    cred = {
+        "id": f"cred-{str(uuid.uuid4())[:8]}",
+        "username": username,
+        "password": password,
+        "type": cred_type,
+        "validity": "confirmed",
+    }
+    cred.update(kwargs)
+    return cred
+
+
+def create_vulnerability(
+    cve: str,
+    severity: str,
+    target_id: str,
+    cvss_score: float = 7.5,
+    **kwargs
+) -> Dict[str, Any]:
+    """Create a vulnerability dictionary."""
+    vuln = {
+        "id": f"vuln-{str(uuid.uuid4())[:8]}",
+        "cve": cve,
+        "severity": severity,
+        "cvss_score": cvss_score,
+        "target_id": target_id,
+        "exploit_available": True,
+    }
+    vuln.update(kwargs)
+    return vuln
+
+
+async def execute_phase(
+    orchestrator: AgentWorkflowOrchestrator,
+    context: Any,
+    phase: WorkflowPhase
+) -> PhaseResult:
+    """Execute a workflow phase and return result."""
+    phase_result = orchestrator._create_phase_result(phase)
     
-    # Create mock specialists (real ones require full infrastructure)
-    class MockReconSpecialist:
-        specialist_type = SpecialistType.RECON
-        
-    class MockAttackSpecialist:
-        specialist_type = SpecialistType.ATTACK
-    
-    specialists = {
-        SpecialistType.RECON: MockReconSpecialist(),
-        SpecialistType.ATTACK: MockAttackSpecialist(),
+    phase_methods = {
+        WorkflowPhase.INITIALIZATION: orchestrator._phase_initialization,
+        WorkflowPhase.STRATEGIC_PLANNING: orchestrator._phase_strategic_planning,
+        WorkflowPhase.RECONNAISSANCE: orchestrator._phase_reconnaissance,
+        WorkflowPhase.INITIAL_ACCESS: orchestrator._phase_initial_access,
+        WorkflowPhase.POST_EXPLOITATION: orchestrator._phase_post_exploitation,
+        WorkflowPhase.LATERAL_MOVEMENT: orchestrator._phase_lateral_movement,
+        WorkflowPhase.GOAL_ACHIEVEMENT: orchestrator._phase_goal_achievement,
+        WorkflowPhase.REPORTING: orchestrator._phase_reporting,
+        WorkflowPhase.CLEANUP: orchestrator._phase_cleanup,
     }
     
-    orchestrator = SpecialistOrchestrator(
-        mission_id=test_mission.id,
-        blackboard=blackboard,
-        specialists=specialists,
-        mission_intelligence=mission_intelligence,
+    phase_method = phase_methods.get(phase)
+    if not phase_method:
+        raise ValueError(f"Unknown phase: {phase}")
+    
+    context.current_phase = phase
+    result = await phase_method(context, phase_result)
+    
+    return result
+
+
+def validate_mission_success(mission: Mission) -> bool:
+    """Validate that all mission goals are achieved."""
+    return all(
+        status == GoalStatus.ACHIEVED 
+        for status in mission.goals.values()
     )
-    
-    return orchestrator
 
 
-@pytest.fixture(scope="function")
-async def mission_planner(
-    test_mission: Mission,
-    mission_intelligence: MissionIntelligence
-) -> MissionPlanner:
-    """Create MissionPlanner."""
-    planner = MissionPlanner(
-        mission_id=test_mission.id,
-        mission_intelligence=mission_intelligence,
+def calculate_success_rate(mission: Mission) -> float:
+    """Calculate mission success rate percentage."""
+    achieved = sum(
+        1 for status in mission.goals.values() 
+        if status == GoalStatus.ACHIEVED
     )
+    total = len(mission.goals)
+    return (achieved / total * 100) if total > 0 else 0.0
+
+
+def print_mission_summary(
+    mission: Mission,
+    context: Any,
+    duration: float
+):
+    """Print formatted mission summary."""
+    print("\n" + "="*100)
+    print("📈 MISSION SUMMARY")
+    print("="*100)
     
-    return planner
-
-
-# ═══════════════════════════════════════════════════════════════
-# Advanced Features Fixtures
-# ═══════════════════════════════════════════════════════════════
-
-@pytest.fixture(scope="function")
-async def risk_assessment_engine(
-    mission_intelligence: MissionIntelligence
-) -> AdvancedRiskAssessmentEngine:
-    """Create AdvancedRiskAssessmentEngine."""
-    from src.core.advanced.risk_assessment import ThreatActor
+    success_rate = calculate_success_rate(mission)
     
-    engine = AdvancedRiskAssessmentEngine(
-        mission_intelligence=mission_intelligence,
-        threat_actor_profile=ThreatActor.APT,
-    )
+    print(f"\n✅ Mission: {mission.name}")
+    print(f"   Status: {mission.status.value}")
+    print(f"   Duration: {duration:.2f} seconds")
+    print(f"   Success Rate: {success_rate:.1f}%")
     
-    return engine
-
-
-@pytest.fixture(scope="function")
-async def adaptation_engine(
-    mission_intelligence: MissionIntelligence
-) -> RealtimeAdaptationEngine:
-    """Create RealtimeAdaptationEngine."""
-    engine = RealtimeAdaptationEngine(
-        mission_intelligence=mission_intelligence
-    )
+    print(f"\n🎯 Goals ({len(mission.goals)}):")
+    for goal_name, status in mission.goals.items():
+        icon = "✅" if status == GoalStatus.ACHIEVED else "❌"
+        print(f"   {icon} {goal_name}: {status.value}")
     
-    return engine
-
-
-@pytest.fixture(scope="function")
-async def task_prioritizer() -> IntelligentTaskPrioritizer:
-    """Create IntelligentTaskPrioritizer."""
-    return IntelligentTaskPrioritizer()
-
-
-@pytest.fixture(scope="function")
-async def visualization_api(
-    mission_intelligence: MissionIntelligence,
-    specialist_orchestrator: SpecialistOrchestrator
-) -> VisualizationDashboardAPI:
-    """Create VisualizationDashboardAPI."""
-    api = VisualizationDashboardAPI(
-        mission_intelligence=mission_intelligence,
-        orchestrator=specialist_orchestrator,
-    )
+    if hasattr(context, 'discovered_targets'):
+        print(f"\n📊 Statistics:")
+        print(f"   Targets Discovered: {len(context.discovered_targets)}")
+        
+        if hasattr(context, 'established_sessions'):
+            print(f"   Sessions Established: {len(context.established_sessions)}")
+        
+        if hasattr(context, 'discovered_creds'):
+            print(f"   Credentials Harvested: {len(context.discovered_creds)}")
+        
+        if hasattr(context, 'discovered_vulns'):
+            print(f"   Vulnerabilities Found: {len(context.discovered_vulns)}")
     
-    return api
+    print("="*100 + "\n")
 
 
-# ═══════════════════════════════════════════════════════════════
-# Data Population Helpers
-# ═══════════════════════════════════════════════════════════════
-
-@pytest.fixture(scope="function")
-async def populate_blackboard_with_targets(
-    blackboard: Blackboard,
-    test_mission: Mission
-) -> list:
-    """Populate Blackboard with test targets."""
-    targets = []
+def assert_phase_success(result: PhaseResult, phase_name: str):
+    """Assert that a phase completed successfully."""
+    assert result.status in [
+        PhaseStatus.COMPLETED,
+        PhaseStatus.IN_PROGRESS
+    ], f"{phase_name} failed with status: {result.status}"
     
-    # Create targets in Blackboard
-    target_data_list = [
-        {
-            "ip": "192.168.1.10",
-            "hostname": "web-server-01",
-            "os": "Linux",
-            "status": TargetStatus.SCANNED,
-        },
-        {
-            "ip": "192.168.1.20",
-            "hostname": "db-server-01",
-            "os": "Linux",
-            "status": TargetStatus.DISCOVERED,
-        },
-        {
-            "ip": "192.168.1.30",
-            "hostname": "mail-server-01",
-            "os": "Windows",
-            "status": TargetStatus.DISCOVERED,
-        },
-    ]
+    print(f"✅ {phase_name}: {result.status.value}")
+
+
+def assert_goal_achieved(mission: Mission, goal_name: str):
+    """Assert that a specific goal is achieved."""
+    assert goal_name in mission.goals, f"Goal '{goal_name}' not found in mission"
+    assert mission.goals[goal_name] == GoalStatus.ACHIEVED, \
+        f"Goal '{goal_name}' not achieved: {mission.goals[goal_name]}"
     
-    for target_data in target_data_list:
-        target = await blackboard.create_target(
-            mission_id=test_mission.id,
-            ip=target_data["ip"],
-            hostname=target_data.get("hostname"),
-            os=target_data.get("os"),
-            status=target_data.get("status", TargetStatus.DISCOVERED),
+    print(f"✅ Goal Achieved: {goal_name}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# DOCKER/INFRASTRUCTURE HELPERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def check_docker_available() -> bool:
+    """Check if Docker is available."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["docker", "version"],
+            capture_output=True,
+            timeout=5
         )
-        targets.append(target)
-    
-    return targets
+        return result.returncode == 0
+    except:
+        return False
 
 
-@pytest.fixture(scope="function")
-async def populate_blackboard_with_vulnerabilities(
-    blackboard: Blackboard,
-    test_mission: Mission,
-    populate_blackboard_with_targets: list
-) -> list:
-    """Populate Blackboard with test vulnerabilities."""
-    vulnerabilities = []
+def check_service_port(host: str, port: int, timeout: float = 2.0) -> bool:
+    """Check if a service is listening on a port."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except:
+        return False
+
+
+async def wait_for_service(
+    host: str,
+    port: int,
+    timeout: float = 30.0,
+    interval: float = 1.0
+) -> bool:
+    """Wait for a service to become available."""
+    import asyncio
+    start = asyncio.get_event_loop().time()
     
-    targets = populate_blackboard_with_targets
+    while (asyncio.get_event_loop().time() - start) < timeout:
+        if check_service_port(host, port):
+            return True
+        await asyncio.sleep(interval)
     
-    if not targets:
-        return vulnerabilities
+    return False
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# LLM INTEGRATION HELPERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def check_deepseek_available() -> bool:
+    """Check if DeepSeek API is configured."""
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+    return deepseek_key is not None and len(deepseek_key) > 0
+
+
+def skip_if_no_deepseek():
+    """Skip test if DeepSeek API is not available."""
+    if not check_deepseek_available():
+        pytest.skip("DeepSeek API key not configured (DEEPSEEK_API_KEY)")
+
+
+def skip_if_no_docker():
+    """Skip test if Docker is not available."""
+    if not check_docker_available():
+        pytest.skip("Docker is not available")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PYTEST HOOKS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Hook to capture test results."""
+    outcome = yield
+    rep = outcome.get_result()
     
-    # Add vulnerabilities to first target
-    target = targets[0]
-    
-    vuln_data_list = [
-        {
-            "cve_id": "CVE-2024-1111",
-            "name": "Critical RCE",
-            "severity": Severity.CRITICAL,
-            "cvss_score": 9.8,
-        },
-        {
-            "cve_id": "CVE-2024-2222",
-            "name": "SQL Injection",
-            "severity": Severity.HIGH,
-            "cvss_score": 8.5,
-        },
-    ]
-    
-    for vuln_data in vuln_data_list:
-        vuln = await blackboard.create_vulnerability(
-            mission_id=test_mission.id,
-            target_id=target.id,
-            cve_id=vuln_data["cve_id"],
-            name=vuln_data["name"],
-            severity=vuln_data["severity"],
-            cvss_score=vuln_data.get("cvss_score"),
+    # Store test result for later use
+    setattr(item, f"rep_{rep.when}", rep)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Modify test collection based on markers."""
+    # Auto-skip tests requiring real infrastructure
+    for item in items:
+        if "real_llm" in item.keywords:
+            if not check_deepseek_available():
+                item.add_marker(
+                    pytest.mark.skip(reason="DeepSeek API not configured")
+                )
+        
+        if "real_infra" in item.keywords:
+            if not check_docker_available():
+                item.add_marker(
+                    pytest.mark.skip(reason="Docker not available")
+                )
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TEST DATA GENERATORS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def generate_random_ip(prefix: str = "192.168.1") -> str:
+    """Generate random IP address."""
+    import random
+    return f"{prefix}.{random.randint(1, 254)}"
+
+
+def generate_random_hostname(prefix: str = "target") -> str:
+    """Generate random hostname."""
+    import random
+    return f"{prefix}-{random.randint(1000, 9999)}"
+
+
+def generate_test_targets(count: int = 5) -> List[Dict[str, Any]]:
+    """Generate multiple test targets."""
+    return [
+        create_target(
+            ip=generate_random_ip(),
+            hostname=generate_random_hostname(),
+            os="Linux" if i % 2 == 0 else "Windows"
         )
-        vulnerabilities.append(vuln)
-    
-    return vulnerabilities
-
-
-# ═══════════════════════════════════════════════════════════════
-# Assertion Helpers
-# ═══════════════════════════════════════════════════════════════
-
-@pytest.fixture
-def assert_mission_intelligence_valid():
-    """Helper to assert MissionIntelligence is valid."""
-    def _assert(intel: MissionIntelligence):
-        assert intel.mission_id
-        assert intel.intel_version >= 1
-        assert intel.created_at
-        assert intel.last_updated
-        
-        # Check collections
-        assert isinstance(intel.targets, dict)
-        assert isinstance(intel.vulnerabilities, dict)
-        assert isinstance(intel.credentials, dict)
-        assert isinstance(intel.tactical_recommendations, list)
-        
-        # Check statistics
-        assert intel.total_targets >= 0
-        assert intel.total_vulnerabilities >= 0
-        assert intel.total_credentials >= 0
-        
-    return _assert
-
-
-@pytest.fixture
-def assert_orchestration_result_valid():
-    """Helper to assert OrchestrationResult is valid."""
-    def _assert(result):
-        assert result.plan_id
-        assert result.mission_id
-        assert result.phase
-        assert result.total_tasks >= 0
-        assert result.completed_tasks >= 0
-        assert result.failed_tasks >= 0
-        assert result.execution_time_seconds >= 0
-        assert isinstance(result.task_results, list)
-        
-    return _assert
-
-
-@pytest.fixture
-def assert_risk_assessment_valid():
-    """Helper to assert RiskAssessment is valid."""
-    def _assert(assessment):
-        assert assessment.assessment_id
-        assert 0 <= assessment.overall_risk_score <= 10
-        assert assessment.risk_level
-        assert isinstance(assessment.factors, list)
-        assert assessment.created_at
-        
-    return _assert
+        for i in range(count)
+    ]

@@ -1,0 +1,377 @@
+version: '3.8'
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# RAGLOX v3.0 - Phase 5.2 End-to-End Testing Infrastructure
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# This Docker Compose file creates vulnerable targets for E2E testing:
+#
+# NETWORKS:
+# - external_network: 192.168.100.0/24 (simulated external)
+# - internal_network: 10.10.0.0/24 (simulated internal/DMZ)
+# - domain_network: 10.20.0.0/24 (simulated AD domain)
+#
+# TARGETS:
+# 1. Mission 01 (EASY): Web server with XSS
+# 2. Mission 02 (MEDIUM): Web server with SQL injection
+# 3. Mission 03 (HARD): Multi-stage pivot targets
+# 4. Mission 04 (EXPERT): Active Directory environment
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+services:
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Mission 01 [EASY]: Web Server with XSS
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  mission01-web-xss:
+    image: vulnerables/web-dvwa:latest
+    container_name: raglox-mission01-web-xss
+    hostname: web-easy.test.local
+    networks:
+      external_network:
+        ipv4_address: 192.168.1.100
+    ports:
+      - "8001:80"
+    environment:
+      - MYSQL_HOST=mission01-db
+      - MYSQL_DATABASE=dvwa
+      - MYSQL_USER=dvwa
+      - MYSQL_PASSWORD=p@ssw0rd
+      - SECURITY_LEVEL=low
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      raglox.mission: "01"
+      raglox.difficulty: "easy"
+      raglox.vulnerability: "xss,csrf"
+
+  mission01-db:
+    image: mysql:5.7
+    container_name: raglox-mission01-db
+    networks:
+      external_network:
+    environment:
+      - MYSQL_ROOT_PASSWORD=toor
+      - MYSQL_DATABASE=dvwa
+      - MYSQL_USER=dvwa
+      - MYSQL_PASSWORD=p@ssw0rd
+    volumes:
+      - mission01-db-data:/var/lib/mysql
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Mission 02 [MEDIUM]: Web Server with SQL Injection
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  mission02-web-sqli:
+    image: bkimminich/juice-shop:latest
+    container_name: raglox-mission02-web-sqli
+    hostname: web-medium.test.local
+    networks:
+      external_network:
+        ipv4_address: 192.168.1.200
+    ports:
+      - "8002:3000"
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      raglox.mission: "02"
+      raglox.difficulty: "medium"
+      raglox.vulnerability: "sqli,xss,broken_auth"
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Mission 03 [HARD]: Multi-Stage Pivot Environment
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  # External Web Server (Entry Point)
+  mission03-web-external:
+    image: ubuntu:20.04
+    container_name: raglox-mission03-web-external
+    hostname: web-external.corp.com
+    networks:
+      external_network:
+        ipv4_address: 192.168.100.10
+      internal_network:
+        ipv4_address: 10.10.0.1
+    ports:
+      - "8003:80"
+      - "2223:22"
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+    command: >
+      bash -c "
+      apt-get update &&
+      apt-get install -y apache2 openssh-server sudo curl wget &&
+      echo 'root:toor' | chpasswd &&
+      echo 'www-data:www-data' | chpasswd &&
+      useradd -m -s /bin/bash testuser &&
+      echo 'testuser:testpass' | chpasswd &&
+      service ssh start &&
+      service apache2 start &&
+      echo '<html><body><h1>External Web Server</h1></body></html>' > /var/www/html/index.html &&
+      tail -f /dev/null
+      "
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    labels:
+      raglox.mission: "03"
+      raglox.difficulty: "hard"
+      raglox.role: "pivot_point"
+      raglox.vulnerability: "sudo_cve"
+
+  # Internal Database Server
+  mission03-db-internal:
+    image: postgres:12
+    container_name: raglox-mission03-db-internal
+    hostname: db-internal.corp.local
+    networks:
+      internal_network:
+        ipv4_address: 10.10.0.5
+    environment:
+      - POSTGRES_DB=corporate
+      - POSTGRES_USER=dbadmin
+      - POSTGRES_PASSWORD=DbP@ss2023!
+    volumes:
+      - mission03-db-data:/var/lib/postgresql/data
+    labels:
+      raglox.mission: "03"
+      raglox.difficulty: "hard"
+      raglox.role: "internal_db"
+
+  # Internal File Server (SMB)
+  mission03-file-internal:
+    image: dperson/samba:latest
+    container_name: raglox-mission03-file-internal
+    hostname: fileserver.corp.local
+    networks:
+      internal_network:
+        ipv4_address: 10.10.0.10
+    ports:
+      - "8445:445"
+    environment:
+      - USER=smbuser;FileShare2023
+      - SHARE=data;/data;yes;no;no;smbuser
+    volumes:
+      - mission03-file-data:/data
+    command: >
+      -s "data;/data;yes;no;no;smbuser" 
+      -u "smbuser;FileShare2023" 
+      -p
+    labels:
+      raglox.mission: "03"
+      raglox.difficulty: "hard"
+      raglox.role: "file_server"
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Mission 04 [EXPERT]: Active Directory Lab (Simplified)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  # External Web Server (Windows-like vulnerable)
+  mission04-web-external:
+    image: ubuntu:20.04
+    container_name: raglox-mission04-web-external
+    hostname: webserver.corp.local
+    networks:
+      external_network:
+        ipv4_address: 192.168.200.50
+      domain_network:
+        ipv4_address: 10.20.0.50
+    ports:
+      - "8004:80"
+      - "8443:443"
+      - "2224:22"
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - DOMAIN=CORP.LOCAL
+    command: >
+      bash -c "
+      apt-get update &&
+      apt-get install -y apache2 openssh-server samba krb5-user libpam-krb5 curl wget &&
+      echo 'root:toor' | chpasswd &&
+      useradd -m -s /bin/bash iis_service &&
+      echo 'iis_service:IIS_P@ss2023' | chpasswd &&
+      service ssh start &&
+      service apache2 start &&
+      echo '<html><body><h1>IIS 10.0 - Windows Server 2019</h1></body></html>' > /var/www/html/index.html &&
+      tail -f /dev/null
+      "
+    labels:
+      raglox.mission: "04"
+      raglox.difficulty: "expert"
+      raglox.role: "domain_member"
+      raglox.domain: "CORP.LOCAL"
+
+  # Simulated Domain Controller (OpenLDAP + Kerberos)
+  mission04-dc:
+    image: osixia/openldap:latest
+    container_name: raglox-mission04-dc
+    hostname: dc01.corp.local
+    networks:
+      domain_network:
+        ipv4_address: 10.20.0.10
+    ports:
+      - "8389:389"
+      - "8636:636"
+    environment:
+      - LDAP_ORGANISATION=CORP
+      - LDAP_DOMAIN=corp.local
+      - LDAP_ADMIN_PASSWORD=Admin2023!
+      - LDAP_CONFIG_PASSWORD=config2023
+      - LDAP_TLS=false
+    volumes:
+      - mission04-ldap-data:/var/lib/ldap
+      - mission04-ldap-config:/etc/ldap/slapd.d
+    labels:
+      raglox.mission: "04"
+      raglox.difficulty: "expert"
+      raglox.role: "domain_controller"
+      raglox.domain: "CORP.LOCAL"
+
+  # File Server (Domain Member)
+  mission04-fileserver:
+    image: dperson/samba:latest
+    container_name: raglox-mission04-fileserver
+    hostname: fileserver.corp.local
+    networks:
+      domain_network:
+        ipv4_address: 10.20.0.20
+    ports:
+      - "8446:445"
+    environment:
+      - USER=backupservice;BackupP@ss2023
+      - USER2=sqlservice;MyV3ryStr0ngP@ssw0rd!
+      - SHARE=backups;/backups;yes;no;no;backupservice
+      - WORKGROUP=CORP
+    volumes:
+      - mission04-file-data:/backups
+    command: >
+      -s "backups;/backups;yes;no;no;backupservice,sqlservice" 
+      -u "backupservice;BackupP@ss2023" 
+      -u "sqlservice;MyV3ryStr0ngP@ssw0rd!" 
+      -w "CORP"
+      -p
+    labels:
+      raglox.mission: "04"
+      raglox.difficulty: "expert"
+      raglox.role: "file_server"
+      raglox.domain: "CORP.LOCAL"
+
+  # SQL Server (Domain Member)
+  mission04-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    container_name: raglox-mission04-sqlserver
+    hostname: sqlserver.corp.local
+    networks:
+      domain_network:
+        ipv4_address: 10.20.0.30
+    ports:
+      - "8433:1433"
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=SQLAdmin2023!
+      - MSSQL_PID=Express
+    volumes:
+      - mission04-sql-data:/var/opt/mssql
+    labels:
+      raglox.mission: "04"
+      raglox.difficulty: "expert"
+      raglox.role: "sql_server"
+      raglox.domain: "CORP.LOCAL"
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Monitoring & Utilities
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  # Network Sniffer (tcpdump for debugging)
+  network-monitor:
+    image: nicolaka/netshoot:latest
+    container_name: raglox-network-monitor
+    hostname: monitor.test.local
+    networks:
+      - external_network
+      - internal_network
+      - domain_network
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    labels:
+      raglox.role: "monitoring"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NETWORKS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+networks:
+  external_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
+          gateway: 192.168.1.1
+    labels:
+      raglox.network: "external"
+      raglox.description: "Simulated external/public network"
+  
+  internal_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/24
+          gateway: 10.10.0.1
+    internal: true
+    labels:
+      raglox.network: "internal"
+      raglox.description: "Simulated internal/DMZ network (isolated)"
+  
+  domain_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.20.0.0/24
+          gateway: 10.20.0.1
+    internal: true
+    labels:
+      raglox.network: "domain"
+      raglox.description: "Simulated Active Directory domain network (isolated)"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# VOLUMES
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+volumes:
+  # Mission 01
+  mission01-db-data:
+    labels:
+      raglox.mission: "01"
+  
+  # Mission 03
+  mission03-db-data:
+    labels:
+      raglox.mission: "03"
+  mission03-file-data:
+    labels:
+      raglox.mission: "03"
+  
+  # Mission 04
+  mission04-ldap-data:
+    labels:
+      raglox.mission: "04"
+  mission04-ldap-config:
+    labels:
+      raglox.mission: "04"
+  mission04-file-data:
+    labels:
+      raglox.mission: "04"
+  mission04-sql-data:
+    labels:
+      raglox.mission: "04"
