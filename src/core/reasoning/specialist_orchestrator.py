@@ -875,11 +875,17 @@ class SpecialistOrchestrator:
                 raise ValueError(f"No specialist available for type {task.specialist_type.value}")
             
             # Create task in Blackboard
+            # Note: target_id must be UUID in Blackboard, so we pass None and include IP in parameters
+            task_params = task.metadata.copy() if task.metadata else {}
+            if task.target_id:
+                task_params["target_ip"] = task.target_id
+            
             bb_task = await self.blackboard.create_task(
                 mission_id=self.mission_id,
                 task_type=task.task_type,
-                target_id=task.target_id,
-                parameters=task.metadata,
+                assigned_to=str(task.specialist_type.value),  # Convert enum to string
+                target_id=None,  # Blackboard requires UUID, so pass None
+                parameters=task_params,
             )
             
             # Execute via specialist (simplified - actual execution handled by specialist)
