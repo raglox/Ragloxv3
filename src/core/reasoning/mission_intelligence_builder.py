@@ -163,7 +163,14 @@ class MissionIntelligenceBuilder:
         
         try:
             # Get all targets from Blackboard
-            targets_data = await self.blackboard.get_all_targets(self.mission_id)
+            target_ids = await self.blackboard.get_mission_targets(self.mission_id)
+            targets_data = []
+            for target_id in target_ids:
+                # Extract ID without prefix
+                clean_id = target_id.replace('target:', '')
+                target_data = await self.blackboard.get_target(clean_id)
+                if target_data:
+                    targets_data.append(target_data)
             
             collected_count = 0
             for target_data in targets_data:
@@ -295,7 +302,13 @@ class MissionIntelligenceBuilder:
         
         try:
             # Get all vulnerabilities from Blackboard
-            vulns_data = await self.blackboard.get_all_vulnerabilities(self.mission_id)
+            vuln_ids = await self.blackboard.get_mission_vulns(self.mission_id)
+            vulns_data = []
+            for vuln_id in vuln_ids:
+                clean_id = vuln_id.replace('vuln:', '')
+                vuln_data = await self.blackboard.get_vulnerability(clean_id)
+                if vuln_data:
+                    vulns_data.append(vuln_data)
             
             collected_count = 0
             for vuln_data in vulns_data:
@@ -517,7 +530,13 @@ class MissionIntelligenceBuilder:
         
         try:
             # Get sessions
-            sessions_data = await self.blackboard.get_all_sessions(self.mission_id)
+            session_ids = await self.blackboard.get_mission_sessions(self.mission_id)
+            sessions_data = []
+            for session_id in session_ids:
+                clean_id = session_id.replace('session:', '')
+                session_data = await self.blackboard.get_session(clean_id)
+                if session_data:
+                    sessions_data.append(session_data)
             sessions_count = 0
             
             for session_data in sessions_data:
@@ -532,7 +551,13 @@ class MissionIntelligenceBuilder:
                         sessions_count += 1
             
             # Get credentials
-            creds_data = await self.blackboard.get_all_credentials(self.mission_id)
+            cred_ids = await self.blackboard.get_mission_creds(self.mission_id)
+            creds_data = []
+            for cred_id in cred_ids:
+                clean_id = cred_id.replace('cred:', '')
+                cred_data = await self.blackboard.get_credential(clean_id)
+                if cred_data:
+                    creds_data.append(cred_data)
             creds_count = 0
             
             for cred_data in creds_data:

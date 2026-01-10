@@ -31,7 +31,8 @@ from src.core.models import (
     Priority,
     Severity,
     TaskType,
-    TaskStatus
+    TaskStatus,
+    Mission
 )
 
 
@@ -41,20 +42,12 @@ class TestPhase5RiskAssessmentE2E:
     """E2E tests for Phase 5.0 Advanced Risk Assessment"""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, real_blackboard, real_redis):
+    async def setup(self, blackboard, redis_client, test_mission):
         """Setup test environment"""
-        self.blackboard = real_blackboard
-        self.redis = real_redis
-        
-        self.mission_id = f"risk_e2e_{uuid.uuid4().hex[:8]}"
-        await self.blackboard.create_mission(
-            mission_id=self.mission_id,
-            name="E2E Risk Assessment Test",
-            description="Testing Advanced Risk Assessment",
-            scope=["10.20.0.0/24"],
-            goals=["Test risk assessment"],
-            constraints={"stealth": "high", "detection_tolerance": "low"}
-        )
+        self.blackboard = blackboard
+        self.redis = redis_client
+        self.mission = test_mission  # Mission object
+        self.mission_id = str(test_mission.id)  # Mission ID string
         
         self.risk_engine = AdvancedRiskAssessmentEngine(
             mission_id=self.mission_id,
@@ -62,11 +55,6 @@ class TestPhase5RiskAssessmentE2E:
         )
         
         yield
-        
-        try:
-            await self.blackboard.delete_mission(self.mission_id)
-        except:
-            pass
 
     @pytest.mark.priority_critical
     async def test_e2e_comprehensive_risk_assessment(self):
@@ -88,7 +76,7 @@ class TestPhase5RiskAssessmentE2E:
                 "target_id": "risk_target_1",
                 "ip": "10.20.0.10",
                 "hostname": "firewall.corp.local",
-                "status": TargetStatus.discovered.value,
+                "status": TargetStatus.DISCOVERED.value,
                 "security_level": "high",  # High risk
                 "monitoring": "active"
             },
@@ -96,14 +84,14 @@ class TestPhase5RiskAssessmentE2E:
                 "target_id": "risk_target_2",
                 "ip": "10.20.0.50",
                 "hostname": "workstation.corp.local",
-                "status": TargetStatus.discovered.value,
+                "status": TargetStatus.DISCOVERED.value,
                 "security_level": "low",  # Low risk
                 "monitoring": "minimal"
             }
         ]
         
         for target in targets:
-            await self.blackboard.add_target(
+            await self.blackboard.create_target(
                 mission_id=self.mission_id,
                 **target
             )
@@ -270,17 +258,10 @@ class TestPhase5AdaptationE2E:
     """E2E tests for Phase 5.0 Real-time Adaptation"""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, real_blackboard):
-        self.blackboard = real_blackboard
-        self.mission_id = f"adapt_e2e_{uuid.uuid4().hex[:8]}"
-        await self.blackboard.create_mission(
-            mission_id=self.mission_id,
-            name="E2E Adaptation Test",
-            description="Testing Real-time Adaptation",
-            scope=["10.30.0.0/24"],
-            goals=["Test adaptation"],
-            constraints={}
-        )
+    async def setup(self, blackboard, test_mission):
+        self.blackboard = blackboard
+        self.mission_id = str(test_mission.id)
+        self.mission = test_mission
         
         self.adaptation_engine = RealtimeAdaptationEngine(
             mission_id=self.mission_id,
@@ -288,11 +269,6 @@ class TestPhase5AdaptationE2E:
         )
         
         yield
-        
-        try:
-            await self.blackboard.delete_mission(self.mission_id)
-        except:
-            pass
 
     @pytest.mark.priority_critical
     async def test_e2e_adaptive_strategy_adjustment(self):
@@ -364,17 +340,10 @@ class TestPhase5PrioritizationE2E:
     """E2E tests for Phase 5.0 Intelligent Task Prioritization"""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, real_blackboard):
-        self.blackboard = real_blackboard
-        self.mission_id = f"prior_e2e_{uuid.uuid4().hex[:8]}"
-        await self.blackboard.create_mission(
-            mission_id=self.mission_id,
-            name="E2E Prioritization Test",
-            description="Testing Intelligent Task Prioritization",
-            scope=["10.40.0.0/24"],
-            goals=["Test prioritization"],
-            constraints={}
-        )
+    async def setup(self, blackboard, test_mission):
+        self.blackboard = blackboard
+        self.mission_id = str(test_mission.id)
+        self.mission = test_mission
         
         self.prioritizer = IntelligentTaskPrioritizer(
             mission_id=self.mission_id,
@@ -382,11 +351,6 @@ class TestPhase5PrioritizationE2E:
         )
         
         yield
-        
-        try:
-            await self.blackboard.delete_mission(self.mission_id)
-        except:
-            pass
 
     @pytest.mark.priority_critical
     async def test_e2e_intelligent_task_ranking(self):
@@ -397,9 +361,9 @@ class TestPhase5PrioritizationE2E:
         # High-priority critical path task
         task1 = await self.blackboard.create_task(
             mission_id=self.mission_id,
-            task_type=TaskType.exploit.value,
+            task_type=TaskType.EXPLOIT.value,
             assigned_to="attack",
-            priority=Priority.critical.value,
+            priority=Priority.CRITICAL.value,
             params={
                 "target_id": "dc01",
                 "vulnerability_id": "CVE-2024-0001",
@@ -412,9 +376,9 @@ class TestPhase5PrioritizationE2E:
         # Medium-priority reconnaissance
         task2 = await self.blackboard.create_task(
             mission_id=self.mission_id,
-            task_type=TaskType.network_scan.value,
+            task_type=TaskType.NETWORK_SCAN.value,
             assigned_to="recon",
-            priority=Priority.medium.value,
+            priority=Priority.MEDIUM.value,
             params={"subnet": "10.40.0.0/24"}
         )
         tasks.append(task2)
@@ -422,9 +386,9 @@ class TestPhase5PrioritizationE2E:
         # Low-priority cleanup
         task3 = await self.blackboard.create_task(
             mission_id=self.mission_id,
-            task_type=TaskType.cleanup.value,
+            task_type=TaskType.CLEANUP.value,
             assigned_to="cleanup",
-            priority=Priority.low.value,
+            priority=Priority.LOW.value,
             params={"clear_logs": True}
         )
         tasks.append(task3)
@@ -432,9 +396,9 @@ class TestPhase5PrioritizationE2E:
         # High-value target exploitation
         task4 = await self.blackboard.create_task(
             mission_id=self.mission_id,
-            task_type=TaskType.exploit.value,
+            task_type=TaskType.EXPLOIT.value,
             assigned_to="attack",
-            priority=Priority.high.value,
+            priority=Priority.HIGH.value,
             params={
                 "target_id": "file_server",
                 "target_value": 90,
@@ -466,8 +430,8 @@ class TestPhase5PrioritizationE2E:
 
     async def _get_task_name(self, task_id):
         """Helper to get task type for display"""
-        task = await self.blackboard.get_task(self.mission_id, task_id)
-        return task.get("task_type", "unknown")
+        task = await self.blackboard.get_task(task_id)
+        return task.get("type", "unknown")
 
     @pytest.mark.priority_high
     async def test_e2e_dynamic_reprioritization(self):
@@ -475,17 +439,17 @@ class TestPhase5PrioritizationE2E:
         # Create tasks
         task1 = await self.blackboard.create_task(
             mission_id=self.mission_id,
-            task_type=TaskType.vuln_scan.value,
+            task_type=TaskType.VULN_SCAN.value,
             assigned_to="vuln",
-            priority=Priority.medium.value,
+            priority=Priority.MEDIUM.value,
             params={"target_id": "server1"}
         )
         
         task2 = await self.blackboard.create_task(
             mission_id=self.mission_id,
-            task_type=TaskType.exploit.value,
+            task_type=TaskType.EXPLOIT.value,
             assigned_to="attack",
-            priority=Priority.low.value,
+            priority=Priority.LOW.value,
             params={"target_id": "server2"}
         )
         
@@ -516,18 +480,11 @@ class TestPhase5VisualizationE2E:
     """E2E tests for Phase 5.0 Visualization Dashboard"""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, real_blackboard, real_redis):
-        self.blackboard = real_blackboard
-        self.redis = real_redis
-        self.mission_id = f"viz_e2e_{uuid.uuid4().hex[:8]}"
-        await self.blackboard.create_mission(
-            mission_id=self.mission_id,
-            name="E2E Visualization Test",
-            description="Testing Visualization Dashboard",
-            scope=["10.50.0.0/24"],
-            goals=["Test visualization"],
-            constraints={}
-        )
+    async def setup(self, blackboard, redis_client, test_mission):
+        self.blackboard = blackboard
+        self.redis = redis_client
+        self.mission = test_mission
+        self.mission_id = str(test_mission.id)
         
         self.viz_api = VisualizationDashboardAPI(
             mission_id=self.mission_id,
@@ -548,21 +505,21 @@ class TestPhase5VisualizationE2E:
         # Setup mission data
         # Add targets
         for i in range(5):
-            await self.blackboard.add_target(
+            await self.blackboard.create_target(
                 mission_id=self.mission_id,
                 target_id=f"viz_target_{i}",
                 ip=f"10.50.0.{10+i}",
                 hostname=f"server{i}.viz.test",
-                status=[TargetStatus.discovered, TargetStatus.scanned, TargetStatus.exploited][i % 3].value
+                status=[TargetStatus.DISCOVERED, TargetStatus.SCANNED, TargetStatus.EXPLOITED][i % 3].value
             )
         
         # Add tasks
         for i in range(10):
             await self.blackboard.create_task(
                 mission_id=self.mission_id,
-                task_type=[TaskType.network_scan, TaskType.vuln_scan, TaskType.exploit][i % 3].value,
+                task_type=[TaskType.NETWORK_SCAN, TaskType.VULN_SCAN, TaskType.EXPLOIT][i % 3].value,
                 assigned_to="specialist",
-                priority=Priority.medium.value,
+                priority=Priority.MEDIUM.value,
                 params={}
             )
         
@@ -592,12 +549,12 @@ class TestPhase5VisualizationE2E:
         initial_targets = initial_data["statistics"]["total_targets"]
         
         # Add new target
-        await self.blackboard.add_target(
+        await self.blackboard.create_target(
             mission_id=self.mission_id,
             target_id="realtime_target",
             ip="10.50.0.100",
             hostname="realtime.viz.test",
-            status=TargetStatus.discovered.value
+            status=TargetStatus.DISCOVERED.value
         )
         
         # Get updated snapshot
@@ -638,19 +595,11 @@ class TestPhase5IntegratedWorkflowE2E:
     """Integrated E2E tests combining all Phase 5.0 features"""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, real_blackboard, real_redis):
-        self.blackboard = real_blackboard
-        self.redis = real_redis
-        self.mission_id = f"integrated_e2e_{uuid.uuid4().hex[:8]}"
-        
-        await self.blackboard.create_mission(
-            mission_id=self.mission_id,
-            name="Integrated Workflow Test",
-            description="Testing integrated Phase 5 workflow",
-            scope=["10.60.0.0/24"],
-            goals=["Complete integrated test"],
-            constraints={"stealth": "high"}
-        )
+    async def setup(self, blackboard, redis_client, test_mission):
+        self.blackboard = blackboard
+        self.redis = redis_client
+        self.mission = test_mission
+        self.mission_id = str(test_mission.id)
         
         # Initialize all components
         self.risk_engine = AdvancedRiskAssessmentEngine(
@@ -672,11 +621,6 @@ class TestPhase5IntegratedWorkflowE2E:
         )
         
         yield
-        
-        try:
-            await self.blackboard.delete_mission(self.mission_id)
-        except:
-            pass
 
     @pytest.mark.priority_critical
     async def test_e2e_complete_intelligent_mission_execution(self):
@@ -699,9 +643,9 @@ class TestPhase5IntegratedWorkflowE2E:
         for i in range(5):
             task_id = await self.blackboard.create_task(
                 mission_id=self.mission_id,
-                task_type=TaskType.network_scan.value,
+                task_type=TaskType.NETWORK_SCAN.value,
                 assigned_to="recon",
-                priority=[Priority.critical, Priority.high, Priority.medium, Priority.low][i % 4].value,
+                priority=[Priority.CRITICAL, Priority.HIGH, Priority.MEDIUM, Priority.LOW][i % 4].value,
                 params={"subnet": f"10.60.{i}.0/24"}
             )
             tasks.append(task_id)
@@ -714,7 +658,7 @@ class TestPhase5IntegratedWorkflowE2E:
         await self.blackboard.update_task(
             mission_id=self.mission_id,
             task_id=first_task,
-            status=TaskStatus.running.value
+            status=TaskStatus.RUNNING.value
         )
         
         # Phase 4: Check risk during execution
@@ -765,17 +709,10 @@ class TestPhase5PerformanceE2E:
     """Performance tests for Phase 5.0 advanced features"""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, real_blackboard):
-        self.blackboard = real_blackboard
-        self.mission_id = f"perf_adv_{uuid.uuid4().hex[:8]}"
-        await self.blackboard.create_mission(
-            mission_id=self.mission_id,
-            name="Performance Test",
-            description="Advanced features performance",
-            scope=["192.168.0.0/16"],
-            goals=["Performance"],
-            constraints={}
-        )
+    async def setup(self, blackboard, test_mission):
+        self.blackboard = blackboard
+        self.mission_id = str(test_mission.id)
+        self.mission = test_mission
         
         self.risk_engine = AdvancedRiskAssessmentEngine(
             mission_id=self.mission_id,
@@ -787,11 +724,6 @@ class TestPhase5PerformanceE2E:
         )
         
         yield
-        
-        try:
-            await self.blackboard.delete_mission(self.mission_id)
-        except:
-            pass
 
     async def test_risk_assessment_performance(self):
         """Test risk assessment performance with large datasets"""
@@ -799,12 +731,12 @@ class TestPhase5PerformanceE2E:
         
         # Add many targets
         for i in range(50):
-            await self.blackboard.add_target(
+            await self.blackboard.create_target(
                 mission_id=self.mission_id,
                 target_id=f"perf_target_{i}",
                 ip=f"192.168.{i//256}.{i%256}",
                 hostname=f"server{i}.perf",
-                status=TargetStatus.scanned.value
+                status=TargetStatus.SCANNED.value
             )
         
         # Add many events
@@ -836,9 +768,9 @@ class TestPhase5PerformanceE2E:
         for i in range(200):
             task_id = await self.blackboard.create_task(
                 mission_id=self.mission_id,
-                task_type=TaskType.network_scan.value,
+                task_type=TaskType.NETWORK_SCAN.value,
                 assigned_to="recon",
-                priority=[Priority.critical, Priority.high, Priority.medium, Priority.low][i % 4].value,
+                priority=[Priority.CRITICAL, Priority.HIGH, Priority.MEDIUM, Priority.LOW][i % 4].value,
                 params={"id": i}
             )
             tasks.append(task_id)

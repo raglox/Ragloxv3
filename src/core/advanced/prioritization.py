@@ -1,166 +1,268 @@
-# ═══════════════════════════════════════════════════════════════
-# RAGLOX v3.0 - Intelligent Task Prioritization
-# Phase 5.0: Advanced Features
-# ═══════════════════════════════════════════════════════════════
-
 """
-Intelligent Task Prioritization using ML-inspired concepts.
+RAGLOX v3.0 - Intelligent Task Prioritization
+Phase 5.0: AI-Powered Task Ranking
 
-Features:
-- Success probability estimation
-- Priority scoring based on multiple factors
-- Learning from past task results
-
-Author: RAGLOX Team
-Version: 3.0.0
-Date: 2026-01-09
+Prioritizes tasks based on:
+- Mission goals alignment
+- Resource availability
+- Risk-reward ratio
+- Dependencies
+- Historical success rates
 """
 
-import logging
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
-
-logger = logging.getLogger("raglox.core.prioritization")
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any
+from datetime import datetime
+import asyncio
 
 
 @dataclass
 class TaskScore:
-    """Task priority score."""
+    """Task priority score breakdown"""
     task_id: str
-    priority_score: float  # 0.0-10.0
-    success_probability: float  # 0.0-1.0
-    value_score: float  # 0.0-10.0
-    risk_score: float  # 0.0-10.0
-    urgency_score: float  # 0.0-10.0
+    total_score: float  # 0.0-1.0
+    goal_alignment: float = 0.0
+    criticality: float = 0.0
+    resource_efficiency: float = 0.0
+    risk_reward: float = 0.0
+    urgency: float = 0.0
 
 
 class IntelligentTaskPrioritizer:
     """
-    Intelligent Task Prioritization Engine.
+    Intelligent Task Prioritization Engine
     
-    Uses ML-inspired concepts to prioritize tasks optimally.
+    Uses multi-factor scoring to rank tasks:
+    1. Goal alignment: How well task supports mission goals
+    2. Criticality: Impact on mission success
+    3. Resource efficiency: ROI in terms of effort
+    4. Risk-reward: Probability of success vs. detection
+    5. Urgency: Time-sensitivity
+    
+    Usage:
+        prioritizer = IntelligentTaskPrioritizer(mission_id, blackboard)
+        ranked_tasks = await prioritizer.rank_tasks([task1, task2, ...])
+        top_task = ranked_tasks[0]
     """
     
-    def __init__(self):
-        self._task_history: List[Dict[str, Any]] = []
-        self._weights = {
-            "success_probability": 0.3,
-            "value": 0.3,
-            "urgency": 0.2,
-            "risk": 0.2,
-        }
-        logger.info("Initialized IntelligentTaskPrioritizer")
+    def __init__(self, mission_id: str, blackboard: "Blackboard"):
+        self.mission_id = mission_id
+        self.blackboard = blackboard
+        self._scoring_history: List[TaskScore] = []
     
-    async def score_task(
+    async def rank_tasks(self, task_ids: List[str]) -> List[TaskScore]:
+        """
+        Rank tasks by priority score.
+        
+        Args:
+            task_ids: List of task IDs to rank
+            
+        Returns:
+            List of TaskScore objects sorted by total_score (highest first)
+        """
+        scores = []
+        
+        for task_id in task_ids:
+            task_data = await self.blackboard.get_task(task_id)
+            if not task_data:
+                continue
+            
+            score = await self._calculate_task_score(task_id, task_data)
+            scores.append(score)
+            self._scoring_history.append(score)
+        
+        # Sort by total score (descending)
+        scores.sort(key=lambda s: s.total_score, reverse=True)
+        return scores
+    
+    async def prioritize_tasks(self, task_ids: List[str]) -> List[str]:
+        """
+        Prioritize tasks and return sorted task IDs.
+        
+        Args:
+            task_ids: List of task IDs to prioritize
+            
+        Returns:
+            List of task IDs sorted by priority (highest first)
+        """
+        scores = await self.rank_tasks(task_ids)
+        return [score.task_id for score in scores]
+    
+    async def _calculate_task_score(
         self,
-        task_type: str,
-        target_id: str,
-        parameters: Optional[Dict[str, Any]] = None
+        task_id: str,
+        task_data: Dict[str, Any]
     ) -> TaskScore:
-        """Score a task for prioritization."""
+        """Calculate comprehensive score for a task"""
         
-        # Estimate success probability (simplified)
-        success_prob = self._estimate_success_probability(task_type, parameters)
+        # Extract task properties
+        task_type = task_data.get("type", "")
+        priority_str = task_data.get("priority", "5")
+        # Convert priority to numeric value
+        priority_map = {
+            "critical": 10,
+            "high": 7,
+            "medium": 5,
+            "low": 3,
+            "minimal": 1
+        }
+        if isinstance(priority_str, str):
+            priority_value = priority_map.get(priority_str.lower(), 5)
+        else:
+            priority_value = int(priority_str)
         
-        # Calculate value score
-        value_score = self._calculate_value_score(task_type, target_id)
+        params = task_data.get("params", {})
         
-        # Calculate risk score (inverse - lower risk = higher priority)
-        risk_score = 5.0  # Default medium risk
+        # Factor 1: Goal Alignment (0.0-1.0)
+        # Higher for tasks that directly support goals
+        goal_alignment = 0.5  # Baseline
+        if "exploit" in task_type.lower():
+            goal_alignment = 0.9  # Exploitation highly aligned
+        elif "recon" in task_type.lower():
+            goal_alignment = 0.7  # Recon important
+        elif "scan" in task_type.lower():
+            goal_alignment = 0.6  # Scanning moderately aligned
         
-        # Calculate urgency
-        urgency_score = 5.0  # Default medium urgency
+        # Factor 2: Criticality (0.0-1.0)
+        # Based on task priority
+        criticality = min(priority_value / 10.0, 1.0)
         
-        # Combined priority score
-        priority_score = (
-            self._weights["success_probability"] * success_prob * 10 +
-            self._weights["value"] * value_score +
-            self._weights["urgency"] * urgency_score +
-            self._weights["risk"] * (10 - risk_score)  # Inverse risk
+        # Factor 3: Resource Efficiency (0.0-1.0)
+        # Simpler tasks = higher efficiency
+        resource_efficiency = 0.7  # Default
+        if "network_scan" in task_type.lower():
+            resource_efficiency = 0.9  # Scanning is efficient
+        elif "exploit" in task_type.lower():
+            resource_efficiency = 0.5  # Exploitation resource-intensive
+        
+        # Factor 4: Risk-Reward (0.0-1.0)
+        # Higher reward, lower risk = better score
+        risk_reward = 0.6  # Baseline
+        cvss_score = params.get("cvss_score", 5.0)
+        if cvss_score >= 8.0:
+            risk_reward = 0.9  # High-impact vuln = high reward
+        elif cvss_score >= 6.0:
+            risk_reward = 0.7
+        
+        # Factor 5: Urgency (0.0-1.0)
+        # Time-sensitive tasks get higher urgency
+        urgency = 0.5  # Default
+        if priority_value >= 8:
+            urgency = 0.9  # Critical priority = urgent
+        elif priority_value >= 6:
+            urgency = 0.7
+        
+        # Calculate weighted total
+        # Weights: goal=0.3, criticality=0.25, efficiency=0.15, risk_reward=0.2, urgency=0.1
+        total_score = (
+            goal_alignment * 0.3 +
+            criticality * 0.25 +
+            resource_efficiency * 0.15 +
+            risk_reward * 0.2 +
+            urgency * 0.1
         )
         
         return TaskScore(
-            task_id=f"task-{task_type}-{target_id}",
-            priority_score=min(priority_score, 10.0),
-            success_probability=success_prob,
-            value_score=value_score,
-            risk_score=risk_score,
-            urgency_score=urgency_score,
+            task_id=task_id,
+            total_score=total_score,
+            goal_alignment=goal_alignment,
+            criticality=criticality,
+            resource_efficiency=resource_efficiency,
+            risk_reward=risk_reward,
+            urgency=urgency
         )
     
-    def _estimate_success_probability(
-        self,
-        task_type: str,
-        parameters: Optional[Dict[str, Any]]
-    ) -> float:
-        """Estimate task success probability."""
-        # Simple heuristic-based estimation
+    async def get_next_task(self) -> Optional[str]:
+        """
+        Get the highest-priority pending task.
         
-        # Check historical success rate
-        similar_tasks = [t for t in self._task_history 
-                        if t.get("task_type") == task_type]
+        Returns:
+            Task ID of highest-priority task, or None if no pending tasks
+        """
+        pending_tasks = await self.blackboard.get_pending_tasks(self.mission_id)
         
-        if similar_tasks:
-            success_count = len([t for t in similar_tasks if t.get("success")])
-            return success_count / len(similar_tasks)
+        if not pending_tasks:
+            return None
         
-        # Default probabilities by task type
-        defaults = {
-            "network_scan": 0.95,
-            "port_scan": 0.90,
-            "vuln_scan": 0.85,
-            "exploit": 0.60,
-            "lateral_move": 0.50,
-            "privilege_escalation": 0.40,
-        }
+        # Rank all pending tasks
+        scores = await self.rank_tasks(pending_tasks)
         
-        return defaults.get(task_type, 0.70)
+        if scores:
+            return scores[0].task_id
+        
+        return None
     
-    def _calculate_value_score(self, task_type: str, target_id: str) -> float:
-        """Calculate task value score."""
-        # Value based on task type
-        value_scores = {
-            "network_scan": 6.0,
-            "port_scan": 7.0,
-            "vuln_scan": 8.0,
-            "exploit": 9.0,
-            "privilege_escalation": 10.0,
-            "lateral_move": 8.5,
-        }
+    async def reprioritize_all_tasks(self) -> List[TaskScore]:
+        """
+        Reprioritize all pending tasks in the mission.
         
-        return value_scores.get(task_type, 5.0)
+        Returns:
+            List of ranked tasks
+        """
+        pending_tasks = await self.blackboard.get_pending_tasks(self.mission_id)
+        return await self.rank_tasks(pending_tasks)
     
-    async def prioritize_tasks(
-        self,
-        tasks: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Prioritize a list of tasks."""
-        
-        scored_tasks = []
-        for task in tasks:
-            score = await self.score_task(
-                task.get("task_type"),
-                task.get("target_id"),
-                task.get("parameters"),
-            )
-            task["priority_score"] = score.priority_score
-            task["success_probability"] = score.success_probability
-            scored_tasks.append(task)
-        
-        # Sort by priority score (descending)
-        scored_tasks.sort(key=lambda t: t["priority_score"], reverse=True)
-        
-        return scored_tasks
+    async def get_scoring_history(self) -> List[TaskScore]:
+        """Get historical task scores"""
+        return self._scoring_history.copy()
     
-    def record_task_result(
-        self,
-        task_type: str,
-        success: bool,
-        duration_seconds: float
-    ):
-        """Record task result for learning."""
-        self._task_history.append({
-            "task_type": task_type,
-            "success": success,
-            "duration_seconds": duration_seconds,
-        })
+    async def explain_score(self, task_id: str) -> Dict[str, Any]:
+        """
+        Get detailed explanation of task score.
+        
+        Args:
+            task_id: Task to explain
+            
+        Returns:
+            Dictionary with score breakdown and explanation
+        """
+        # Find most recent score for this task
+        for score in reversed(self._scoring_history):
+            if score.task_id == task_id:
+                return {
+                    "task_id": task_id,
+                    "total_score": score.total_score,
+                    "breakdown": {
+                        "goal_alignment": {
+                            "value": score.goal_alignment,
+                            "weight": 0.3,
+                            "contribution": score.goal_alignment * 0.3
+                        },
+                        "criticality": {
+                            "value": score.criticality,
+                            "weight": 0.25,
+                            "contribution": score.criticality * 0.25
+                        },
+                        "resource_efficiency": {
+                            "value": score.resource_efficiency,
+                            "weight": 0.15,
+                            "contribution": score.resource_efficiency * 0.15
+                        },
+                        "risk_reward": {
+                            "value": score.risk_reward,
+                            "weight": 0.2,
+                            "contribution": score.risk_reward * 0.2
+                        },
+                        "urgency": {
+                            "value": score.urgency,
+                            "weight": 0.1,
+                            "contribution": score.urgency * 0.1
+                        }
+                    },
+                    "ranking": "high" if score.total_score >= 0.7 else "medium" if score.total_score >= 0.5 else "low"
+                }
+        
+        return {"error": "Task score not found"}
+    
+    async def calculate_priority_scores(self, task_ids: List[str]) -> Dict[str, float]:
+        """
+        Calculate priority scores for multiple tasks.
+        
+        Args:
+            task_ids: List of task IDs
+            
+        Returns:
+            Dictionary mapping task_id to total_score
+        """
+        scores = await self.rank_tasks(task_ids)
+        return {score.task_id: score.total_score for score in scores}

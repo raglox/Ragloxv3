@@ -95,6 +95,36 @@ def e2e_settings() -> Settings:
 # ═══════════════════════════════════════════════════════════════
 
 @pytest.fixture(scope="function")
+async def redis_client(e2e_settings: Settings, check_services):
+    """
+    Provide a Redis client for E2E tests.
+    """
+    import redis.asyncio as aioredis
+    client = await aioredis.from_url(
+        e2e_settings.redis_url,
+        encoding="utf-8",
+        decode_responses=True
+    )
+    
+    try:
+        yield client
+    finally:
+        await client.close()
+
+
+@pytest.fixture(scope="function")
+async def database_conn(e2e_settings: Settings, check_services):
+    """
+    Provide a database connection for E2E tests.
+    
+    For now, we're just providing None as the codebase doesn't use
+    a direct database connection - it uses Redis/Blackboard for state.
+    """
+    # TODO: Add actual database connection if needed
+    yield None
+
+
+@pytest.fixture(scope="function")
 async def blackboard(e2e_settings: Settings, check_services) -> AsyncGenerator[Blackboard, None]:
     """
     Provide a real Blackboard instance connected to PostgreSQL and Redis.
@@ -104,31 +134,39 @@ async def blackboard(e2e_settings: Settings, check_services) -> AsyncGenerator[B
     bb = Blackboard(settings=e2e_settings)
     
     try:
-        # Initialize connection
-        await bb.initialize()
+        # Connect to Redis
+        await bb.connect()
         
         yield bb
     finally:
         # Cleanup
-        await bb.close()
+        await bb.disconnect()
 
 
 @pytest.fixture(scope="function")
 async def test_mission(blackboard: Blackboard) -> Mission:
     """Create a test mission with real data."""
-    mission_data = MissionCreate(
+    from src.core.models import Mission
+    from uuid import uuid4
+    from datetime import datetime
+    
+    mission = Mission(
+        id=uuid4(),
         name=f"E2E Test Mission {uuid4().hex[:8]}",
         description="Enterprise-grade E2E test mission",
+        status=MissionStatus.CREATED,
         scope=["192.168.1.0/24", "10.0.0.0/24"],
-        goals=["gain_access", "privilege_escalation", "lateral_movement"],
+        goals={"gain_access": "pending", "privilege_escalation": "pending", "lateral_movement": "pending"},
         constraints={
             "max_duration_hours": 2,
             "stealth_level": "high",
             "allowed_techniques": ["exploit", "password_spray"],
-        }
+        },
+        created_at=datetime.utcnow()
     )
     
-    mission = await blackboard.create_mission(mission_data)
+    # Store in blackboard
+    await blackboard.create_mission(mission)
     
     return mission
 

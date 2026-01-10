@@ -32,10 +32,15 @@ class TestAdvancedChatWorkflowScenariosE2E:
     """Advanced chat workflow scenarios"""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, real_blackboard, real_redis):
-        self.blackboard = real_blackboard
-        self.redis = real_redis
-        self.session_manager = SessionManager(redis=self.redis)
+    async def setup(self, blackboard, redis_client):
+        self.blackboard = blackboard
+        self.redis = redis_client
+        
+        try:
+            self.session_manager = SessionManager(blackboard=self.blackboard)
+        except Exception as e:
+            print(f"Warning: SessionManager init failed: {e}")
+            self.session_manager = None
         
         self.session_id = f"adv_session_{uuid.uuid4().hex[:8]}"
         self.user_id = f"user_{uuid.uuid4().hex[:8]}"
@@ -43,7 +48,8 @@ class TestAdvancedChatWorkflowScenariosE2E:
         yield
         
         try:
-            await self.session_manager.end_session(self.session_id)
+            if self.session_manager:
+                await self.session_manager.end_session(self.session_id)
         except:
             pass
 
@@ -578,8 +584,8 @@ class TestChatWorkflowPerformanceE2E:
     """Performance tests for chat workflow"""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, real_redis):
-        self.redis = real_redis
+    async def setup(self, redis_client):
+        self.redis = redis_client
         self.session_id = f"perf_session_{uuid.uuid4().hex[:8]}"
         yield
 
