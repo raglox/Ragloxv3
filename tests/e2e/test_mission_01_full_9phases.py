@@ -17,7 +17,7 @@ from typing import Dict, Any, List
 # Core components
 from src.core.config import Settings, get_settings
 from src.core.knowledge import EmbeddedKnowledge, get_knowledge
-from src.core.blackboard import Blackboard
+from src.core.blackboard import Blackboard  # Enhanced with RedisManager
 from src.core.workflow_orchestrator import AgentWorkflowOrchestrator, WorkflowPhase, PhaseStatus
 from src.core.models import Mission, MissionCreate, MissionStatus, GoalStatus
 
@@ -109,8 +109,9 @@ async def test_mission_01_full_9phases():
         logger.info(f"✅ Knowledge Base initialized")
         logger.info(f"   └─ RX Modules: {len(knowledge.rx_modules) if hasattr(knowledge, 'rx_modules') else 'Unknown'}")
         
-        # Connect to Blackboard
-        blackboard = Blackboard(settings=settings)
+        # Connect to Blackboard (with RedisManager for production reliability)
+        logger.info("   └─ Using Blackboard with RedisManager (connection pooling, circuit breaker, retry)")
+        blackboard = Blackboard(settings=settings, use_redis_manager=True)
         await blackboard.connect()
         assert blackboard.is_connected(), "Blackboard connection failed"
         logger.info(f"✅ Blackboard connected: {settings.redis_url}")
@@ -216,6 +217,29 @@ async def test_mission_01_full_9phases():
             scope=mission.scope,
             constraints=mission.constraints
         )
+        
+        # Wait for workflow to execute (it runs in background task)
+        # Give it some time to complete at least initial phases
+        logger.info(f"\n⏳ Waiting for workflow execution (max 60s)...")
+        
+        await asyncio.sleep(15)  # Wait 15 seconds for phases to execute
+        
+        await asyncio.sleep(5)  # Wait 5 seconds for phases to execute
+        
+        # Try to retrieve workflow state from Blackboard
+        try:
+            workflow_state_key = f"workflow:state:{mission.id}"
+            workflow_state = await blackboard.hgetall(workflow_state_key)
+            if workflow_state:
+                logger.info(f"   └─ Workflow state retrieved from Blackboard")
+                logger.info(f"      └─ Current phase: {workflow_state.get('current_phase', 'unknown')}")
+                logger.info(f"      └─ Phase count: {workflow_state.get('phase_count', 0)}")
+        except Exception as e:
+            logger.warning(f"   └─ Could not retrieve workflow state: {e}")
+        
+        # Check if workflow completed any phases
+        if hasattr(result, 'phase_history'):
+            logger.info(f"   └─ Phases in result object: {len(result.phase_history)}")
         
         workflow_end = datetime.now()
         workflow_duration = (workflow_end - workflow_start).total_seconds()

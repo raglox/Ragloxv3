@@ -191,7 +191,10 @@ class AgentWorkflowOrchestrator:
         knowledge: Optional[EmbeddedKnowledge] = None
     ):
         self.settings = settings or get_settings()
-        self.blackboard = blackboard or Blackboard(settings=self.settings)
+        
+        # Use Blackboard with RedisManager (production mode by default)
+        self.blackboard = blackboard or Blackboard(settings=self.settings, use_redis_manager=True)
+        
         self.knowledge = knowledge
         self.logger = logger  # Module-level logger
         

@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
-# RAGLOX v3.0 - Blackboard Implementation
-# Central shared state using Redis
+# RAGLOX v3.0 - Blackboard Implementation (Enhanced with RedisManager)
+# Central shared state using Redis with production-grade reliability
 # ═══════════════════════════════════════════════════════════════
 
 from datetime import datetime
@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Set, Type, TypeVar, Union
 from uuid import UUID
 import json
 import asyncio
+import logging
 
 import redis.asyncio as aioredis
 from pydantic import BaseModel
@@ -24,7 +25,16 @@ from .models import (
     BlackboardEvent,
 )
 
+# Import RedisManager for production reliability
+try:
+    from .redis_manager import RedisManager
+    REDIS_MANAGER_AVAILABLE = True
+except ImportError:
+    REDIS_MANAGER_AVAILABLE = False
+    logging.warning("RedisManager not available, using basic Redis connection")
+
 T = TypeVar('T', bound=BaseModel)
+logger = logging.getLogger(__name__)
 
 
 class Blackboard:
@@ -33,6 +43,12 @@ class Blackboard:
     
     Implements the Blackboard pattern using Redis as the backing store.
     All specialists read from and write to this shared state.
+    
+    Enhanced with RedisManager for production reliability:
+    - Connection pooling for better performance
+    - Circuit breaker to prevent cascading failures
+    - Automatic retry with exponential backoff
+    - High availability via Sentinel support
     
     Features:
     - Key-value storage for entities
@@ -44,7 +60,8 @@ class Blackboard:
     def __init__(
         self,
         redis_url: Optional[str] = None,
-        settings: Optional[Settings] = None
+        settings: Optional[Settings] = None,
+        use_redis_manager: bool = True  # Use enhanced RedisManager by default
     ):
         """
         Initialize the Blackboard.
@@ -52,28 +69,44 @@ class Blackboard:
         Args:
             redis_url: Redis connection URL (overrides settings)
             settings: Application settings
+            use_redis_manager: Use RedisManager for enhanced reliability (default: True)
         """
         self.settings = settings or get_settings()
         self.redis_url = redis_url or self.settings.redis_url
         self._redis: Optional[aioredis.Redis] = None
+        self._redis_manager: Optional[RedisManager] = None
         self._pubsub: Optional[aioredis.client.PubSub] = None
         self._connected = False
+        self._use_redis_manager = use_redis_manager and REDIS_MANAGER_AVAILABLE
+        
+        if self._use_redis_manager:
+            logger.info("Blackboard initialized with RedisManager (production mode)")
     
     # ═══════════════════════════════════════════════════════════
     # Connection Management
     # ═══════════════════════════════════════════════════════════
     
     async def connect(self) -> None:
-        """Connect to Redis."""
+        """Connect to Redis (with RedisManager if available)."""
         if self._connected:
             return
-            
-        self._redis = await aioredis.from_url(
-            self.redis_url,
-            encoding="utf-8",
-            decode_responses=True,
-            max_connections=self.settings.redis_max_connections,
-        )
+        
+        if self._use_redis_manager:
+            # Use RedisManager for production reliability
+            self._redis_manager = RedisManager(settings=self.settings)
+            await self._redis_manager.connect()
+            self._redis = self._redis_manager.redis  # Use property, not method
+            logger.info("Blackboard connected via RedisManager (pooled connection)")
+        else:
+            # Fallback to basic Redis connection
+            self._redis = await aioredis.from_url(
+                self.redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                max_connections=self.settings.redis_max_connections,
+            )
+            logger.info("Blackboard connected via basic Redis")
+        
         self._connected = True
     
     async def disconnect(self) -> None:
@@ -81,9 +114,16 @@ class Blackboard:
         if self._pubsub:
             await self._pubsub.close()
             self._pubsub = None
-        if self._redis:
+        
+        if self._use_redis_manager and self._redis_manager:
+            await self._redis_manager.disconnect()
+            self._redis_manager = None
+            logger.info("Blackboard disconnected from RedisManager")
+        elif self._redis:
             await self._redis.close()
-            self._redis = None
+            logger.info("Blackboard disconnected from Redis")
+        
+        self._redis = None
         self._connected = False
     
     async def health_check(self) -> bool:
