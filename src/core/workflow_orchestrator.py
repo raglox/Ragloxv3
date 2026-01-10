@@ -193,6 +193,7 @@ class AgentWorkflowOrchestrator:
         self.settings = settings or get_settings()
         self.blackboard = blackboard or Blackboard(settings=self.settings)
         self.knowledge = knowledge
+        self.logger = logger  # Module-level logger
         
         # State
         self._active_workflows: Dict[str, WorkflowContext] = {}
@@ -425,7 +426,7 @@ class AgentWorkflowOrchestrator:
             self.knowledge = get_knowledge()
         
         if self.knowledge and self.knowledge.is_loaded():
-            stats = self.knowledge.get_stats()
+            stats = self.knowledge.get_statistics()
             logger.info(
                 f"Knowledge base loaded: {stats.get('total_modules', 0)} RX modules, "
                 f"{stats.get('nuclei_templates', 0)} Nuclei templates"
@@ -479,6 +480,7 @@ class AgentWorkflowOrchestrator:
             })
         
         result.status = PhaseStatus.COMPLETED
+        result.next_phase = WorkflowPhase.STRATEGIC_PLANNING
         return result
     
     async def _phase_strategic_planning(
@@ -500,10 +502,7 @@ class AgentWorkflowOrchestrator:
             # Import strategic planner
             from ..intelligence import StrategicAttackPlanner
             
-            planner = StrategicAttackPlanner(
-                knowledge_base=self.knowledge,
-                logger=logger
-            )
+            planner = StrategicAttackPlanner()
             
             # Generate campaign
             campaign = await planner.plan_campaign(
@@ -1155,14 +1154,20 @@ class AgentWorkflowOrchestrator:
         """Create a task in the blackboard."""
         from .models import Task
         
+        # Handle mission_id being either str or UUID
+        if isinstance(mission_id, str):
+            mission_uuid = UUID(mission_id)
+        else:
+            mission_uuid = mission_id
+        
         task = Task(
-            mission_id=UUID(mission_id),
+            mission_id=mission_uuid,
             type=task_type,
             specialist=specialist,
             priority=priority,
-            target_id=UUID(target_id) if target_id else None,
-            vuln_id=UUID(vuln_id) if vuln_id else None,
-            cred_id=UUID(cred_id) if cred_id else None,
+            target_id=UUID(target_id) if target_id and isinstance(target_id, str) else target_id,
+            vuln_id=UUID(vuln_id) if vuln_id and isinstance(vuln_id, str) else vuln_id,
+            cred_id=UUID(cred_id) if cred_id and isinstance(cred_id, str) else cred_id,
             result_data=metadata or {}
         )
         
