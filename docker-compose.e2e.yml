@@ -98,7 +98,7 @@ services:
     hostname: web-external.corp.com
     networks:
       external_network:
-        ipv4_address: 192.168.100.10
+        ipv4_address: 192.168.1.10
       internal_network:
         ipv4_address: 10.10.0.1
     ports:
@@ -182,7 +182,7 @@ services:
     hostname: webserver.corp.local
     networks:
       external_network:
-        ipv4_address: 192.168.200.50
+        ipv4_address: 192.168.1.50
       domain_network:
         ipv4_address: 10.20.0.50
     ports:
