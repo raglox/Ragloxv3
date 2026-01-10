@@ -19,12 +19,16 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 
 # RAGLOX Core
-from src.core.workflow_orchestrator import AgentWorkflowOrchestrator
+from src.core.workflow_orchestrator import (
+    AgentWorkflowOrchestrator,
+    WorkflowPhase,
+    PhaseStatus,
+    PhaseResult
+)
 from src.core.blackboard import Blackboard
 from src.core.knowledge import EmbeddedKnowledge
 from src.core.models import (
     Mission, MissionStatus, MissionCreate,
-    WorkflowPhase, PhaseStatus, PhaseResult,
     TaskStatus, SpecialistType, TaskType,
     GoalStatus
 )

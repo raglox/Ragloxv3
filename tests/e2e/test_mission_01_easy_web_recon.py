@@ -129,7 +129,7 @@ async def blackboard(settings):
 async def knowledge():
     """Get real knowledge base."""
     kb = get_knowledge()
-    print(f"\n✅ Knowledge Base loaded: {kb.stats.get('total_rx_modules', 0)} modules")
+    print(f"\n✅ Knowledge Base loaded: {kb.stats.total_rx_modules} modules")
     return kb
 
 
