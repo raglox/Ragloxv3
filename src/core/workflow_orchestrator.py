@@ -188,7 +188,8 @@ class AgentWorkflowOrchestrator:
         self,
         blackboard: Optional[Blackboard] = None,
         settings: Optional[Settings] = None,
-        knowledge: Optional[EmbeddedKnowledge] = None
+        knowledge: Optional[EmbeddedKnowledge] = None,
+        environment_manager: Optional[Any] = None
     ):
         self.settings = settings or get_settings()
         
@@ -196,6 +197,7 @@ class AgentWorkflowOrchestrator:
         self.blackboard = blackboard or Blackboard(settings=self.settings, use_redis_manager=True)
         
         self.knowledge = knowledge
+        self.environment_manager = environment_manager  # Store for use in phases
         self.logger = logger  # Module-level logger
         
         # State
@@ -384,6 +386,9 @@ class AgentWorkflowOrchestrator:
             # Store phase result
             context.phase_results[phase.value] = result
             await self._store_workflow_state(context)
+            
+            # Store phase in history for E2E test verification
+            await self._store_phase_history(context.mission_id, phase, result)
             
             logger.info(
                 f"Phase {phase.value} completed: status={result.status.value}, "
@@ -1080,7 +1085,8 @@ class AgentWorkflowOrchestrator:
         try:
             from ..infrastructure.orchestrator import EnvironmentManager, EnvironmentConfig
             
-            env_manager = EnvironmentManager()
+            # Use provided environment_manager or create new one
+            env_manager = self.environment_manager or EnvironmentManager()
             
             env_config = EnvironmentConfig(
                 environment_type=config.get("type", "ssh"),
@@ -1252,6 +1258,31 @@ class AgentWorkflowOrchestrator:
         await self.blackboard.hset(
             f"workflow:{context.mission_id}",
             mapping=context.to_dict()
+        )
+    
+    async def _store_phase_history(
+        self, 
+        mission_id: str, 
+        phase: WorkflowPhase, 
+        result: PhaseResult
+    ) -> None:
+        """Store phase execution history for verification."""
+        import json
+        phase_data = {
+            "phase": phase.value,
+            "status": result.status.value,
+            "started_at": result.started_at.isoformat() if result.started_at else None,
+            "completed_at": result.completed_at.isoformat() if result.completed_at else None,
+            "duration_seconds": result.duration_seconds,
+            "discoveries_count": len(result.discoveries),
+            "errors_count": len(result.errors)
+        }
+        
+        # Store in Redis hash: workflow:{mission_id}:phase_history
+        # Use phase.value as key and JSON-serialized data as value
+        await self.blackboard.hset(
+            f"workflow:{mission_id}:phase_history",
+            mapping={phase.value: json.dumps(phase_data)}
         )
     
     async def _llm_enhance_campaign(

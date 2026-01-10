@@ -22,6 +22,9 @@ async def firecracker_client():
         max_retries=3
     )
     yield client
+    
+    # Cleanup: close the session
+    await client.close()
 
 
 async def test_firecracker_api_health(firecracker_client):
@@ -50,41 +53,56 @@ async def test_create_test_vm(firecracker_client):
     print("TEST 2: Create Test VM")
     print("="*60)
     
+    vm_data = None
     vm_id = None
     
     try:
         # Create VM
         print("\n📦 Creating VM...")
-        vm_id = await firecracker_client.create_vm(
+        vm_data = await firecracker_client.create_vm(
             user_id="test-user-e2e",
             vcpu_count=2,
             mem_size_mib=2048,
             disk_size_mb=10240
         )
         
+        # Extract vm_id from response
+        vm_id = vm_data.get("vm_id")
+        
         print(f"✅ VM Created: {vm_id}")
+        print(f"✅ VM IP: {vm_data.get('ip_address', 'N/A')}")
+        print(f"✅ VM Status: {vm_data.get('status', 'unknown')}")
         
         # Wait for VM to be ready
-        print("\n⏳ Waiting for VM to be ready...")
-        await asyncio.sleep(5)
+        print("\n⏳ Waiting for VM to stabilize...")
+        await asyncio.sleep(2)
         
-        # Get VM info
-        vm_info = await firecracker_client.get_vm_info(vm_id)
-        print(f"✅ VM State: {vm_info.get('state', 'unknown')}")
-        print(f"✅ VM IP: {vm_info.get('ip_address', 'N/A')}")
+        # Verify VM was created successfully
+        assert vm_data is not None, "VM creation returned None"
+        assert vm_id is not None, "VM ID is missing"
+        assert vm_data.get("status") in ["running", "RUNNING", "creating", "CREATING"], \
+            f"VM status is {vm_data.get('status')}"
         
-        assert vm_info is not None
-        assert vm_info.get("state") in ["running", "RUNNING", "creating", "CREATING"]
+        print(f"\n✅ VM Creation Test: PASSED")
+        print(f"   VM ID: {vm_id}")
+        print(f"   IP Address: {vm_data.get('ip_address')}")
+        print(f"   Status: {vm_data.get('status')}")
         
         return vm_id
         
     except Exception as e:
         print(f"❌ VM Creation Failed: {e}")
+        
+        # Cleanup: try to delete VM if it was created
         if vm_id:
             try:
+                print(f"\n🧹 Attempting cleanup for VM: {vm_id}")
                 await firecracker_client.delete_vm(vm_id)
-            except:
-                pass
+                print(f"✅ Cleanup successful")
+            except Exception as cleanup_error:
+                print(f"⚠️ Cleanup failed: {cleanup_error}")
+        
+        # Re-raise the original exception
         raise
 
 
