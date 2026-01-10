@@ -170,13 +170,22 @@ export interface ChatMessage {
   related_action_id?: string;
   // Command execution context (for terminal integration)
   command?: string;
-  output?: string[];
+  output?: string | string[];
   // Optimistic update status
-  status?: "pending" | "sending" | "sent" | "failed" | "streaming" | "complete";
+  status?: "pending" | "sending" | "sent" | "failed" | "streaming" | "complete" | "error";
   // Temporary ID for optimistic updates (will be replaced by server ID)
   tempId?: string;
+  // Optimistic flag
+  isOptimistic?: boolean;
   // Error message if failed
   error?: string;
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 1: DeepSeek Integration - Reasoning support
+  // ═══════════════════════════════════════════════════════════════
+  // DeepSeek R1 reasoning process (chain of thought)
+  reasoning?: string;
+  // Whether reasoning is still being generated
+  isReasoningStreaming?: boolean;
 }
 
 // ============================================
@@ -468,6 +477,15 @@ export interface VMConfiguration {
   plan: string;
   location: string;
   os: string;
+}
+
+// VM Status for real-time capability level tracking
+export interface VMStatus {
+  status: "not_created" | "creating" | "ready" | "error" | "unknown";
+  progress?: number;
+  message?: string;
+  vm_id?: string;
+  ip?: string;
 }
 
 export interface RegisterRequest {

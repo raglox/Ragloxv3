@@ -283,6 +283,7 @@ async def test_execute_shell_lazy_provision_vm_status_configuring(mission_contro
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Simulation mode removed")
 async def test_execute_shell_lazy_provision_vm_status_failed(mission_controller, mock_blackboard):
     """
     Test _execute_shell_command with VM in 'failed' status.

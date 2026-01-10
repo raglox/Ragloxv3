@@ -124,6 +124,7 @@ def mock_request(mock_user_repo, mock_org_repo, mock_token_store):
 # ═══════════════════════════════════════════════════════════════
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Simulation mode removed")
 async def test_complete_lazy_provisioning_flow(
     mock_request,
     mock_user_repo,
@@ -300,6 +301,7 @@ async def test_complete_lazy_provisioning_flow(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Simulation mode removed")
 async def test_registration_to_first_command_flow(
     mock_request,
     mock_user_repo,

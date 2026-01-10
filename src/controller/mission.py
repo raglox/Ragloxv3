@@ -40,6 +40,11 @@ from ..core.retry_policy import get_retry_manager
 # ═══════════════════════════════════════════════════════════════
 from ..core.approval_store import ApprovalStore, get_approval_store
 
+# ═══════════════════════════════════════════════════════════════
+# SEC-01: Enhanced Exception Handling
+# ═══════════════════════════════════════════════════════════════
+from ..core.exceptions import handle_exception_gracefully
+
 
 class MissionController:
     """
@@ -340,9 +345,11 @@ class MissionController:
                 VMProvisionStatus.FAILED.value,
                 {"error_message": str(e)}
             )
-            raise Exception(
-                f"Failed to provision execution environment: {e}"
-            ) from e
+            raise handle_exception_gracefully(
+                e,
+                context="VM provisioning",
+                logger=self.logger
+            )
     
     async def start_mission(self, mission_id: str) -> bool:
         """
@@ -412,6 +419,11 @@ class MissionController:
             )
             return False
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Update status to starting
         await self.blackboard.update_mission_status(mission_id, MissionStatus.STARTING)
         
@@ -728,6 +740,11 @@ class MissionController:
                     self.logger.error(f"Failed to initialize real exploitation: {e}")
                     self.logger.warning("Attack specialist falling back to SIMULATION mode")
             
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
             attack = AttackSpecialist(
                 blackboard=Blackboard(settings=self.settings),
                 settings=self.settings,
@@ -772,6 +789,11 @@ class MissionController:
                 except Exception as e:
                     self.logger.error(f"Error cleaning up C2 sessions: {e}")
         
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
         self.logger.info(f"Specialists stopped for mission {mission_id}")
     
     # ═══════════════════════════════════════════════════════════
@@ -864,6 +886,11 @@ class MissionController:
                 self.logger.error(f"Error in monitor loop: {e}")
                 await asyncio.sleep(1)
     
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
     async def _monitor_mission(self, mission_id: str) -> None:
         """Monitor a single mission."""
         mission_data = await self.blackboard.get_mission(mission_id)
@@ -921,6 +948,11 @@ class MissionController:
                 self.logger.error(f"Error in watchdog loop: {e}")
                 await asyncio.sleep(5)
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         self.logger.info("🐕 Task Watchdog stopped")
     
     async def _check_zombie_tasks(self, mission_id: str) -> None:
@@ -996,6 +1028,11 @@ class MissionController:
         except Exception as e:
             self.logger.error(f"Error checking zombie tasks: {e}")
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     # ═══════════════════════════════════════════════════════════
     # Utility Methods
     # ═══════════════════════════════════════════════════════════
@@ -1041,6 +1078,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to connect ApprovalStore to Redis: {e}. Using in-memory fallback.")
     
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
     async def request_approval(
         self,
         mission_id: str,
@@ -1077,6 +1119,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to persist approval {action_id} to Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Update mission status to waiting
         await self.blackboard.update_mission_status(mission_id, MissionStatus.WAITING_FOR_APPROVAL)
         
@@ -1141,6 +1188,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to get approval from Redis: {e}")
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         if not action:
             self.logger.error(f"Action {action_id} not found in pending approvals")
             return False
@@ -1171,6 +1223,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to update approval in Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Resume mission
         await self.blackboard.update_mission_status(mission_id, MissionStatus.RUNNING)
         
@@ -1236,6 +1293,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to get approval from Redis: {e}")
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         if not action:
             self.logger.error(f"Action {action_id} not found in pending approvals")
             return False
@@ -1268,6 +1330,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to update approval in Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Publish rejection response
         response_event = ApprovalResponseEvent(
             mission_id=UUID(mission_id),
@@ -1330,6 +1397,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to get pending approvals from Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         return pending
     
     def _approval_to_dict(self, action: ApprovalAction) -> Dict[str, Any]:
@@ -1372,6 +1444,11 @@ class MissionController:
             )
             return {"pending": pending_count, "completed": 0, "approved": 0, "rejected": 0, "expired": 0}
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     async def _resume_approved_task(self, mission_id: str, action: ApprovalAction) -> None:
         """
         Resume a task that was waiting for approval.
@@ -1484,6 +1561,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to persist chat message to Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Publish chat event
         event = ChatEvent(
             mission_id=UUID(mission_id),
@@ -1513,6 +1595,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to persist response to Redis: {e}")
             
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
             # Publish response event via Blackboard Pub/Sub
             response_event = ChatEvent(
                 mission_id=UUID(mission_id),
@@ -1544,6 +1631,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to broadcast chat message via WebSocket: {e}")
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         # Return AI response if available, otherwise return user message
         # HTTP response serves as fallback when WebSocket is not available
         return response if response else message
@@ -1582,6 +1674,11 @@ class MissionController:
         except Exception as e:
             self.logger.warning(f"Failed to get chat history from Redis: {e}")
         
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # Fallback to in-memory history
         history = self._chat_history.get(mission_id, [])
         return [
@@ -1596,6 +1693,261 @@ class MissionController:
             for msg in history[-limit:]
         ]
     
+    # ═══════════════════════════════════════════════════════════
+    # PHASE 1: HackerAgent Integration Methods
+    # ═══════════════════════════════════════════════════════════
+    
+    async def _process_with_agent(
+        self,
+        mission_id: str,
+        user_message: str
+    ) -> Optional[ChatMessage]:
+        """
+        Process chat message using HackerAgent with DeepSeek.
+        
+        This replaces the simple if/else logic with intelligent LLM-powered
+        response generation, tool selection, and execution.
+        
+        Architecture:
+            User Message → Agent Context → HackerAgent → LLM (DeepSeek)
+                         ↓
+            Tool Calls ← Agent Response ← Reasoning + Actions
+        
+        Args:
+            mission_id: Mission ID
+            user_message: User's message content
+        
+        Returns:
+            ChatMessage with agent's response, or None to fallback
+        """
+        try:
+            # 1. Get or create agent for this mission
+            agent = await self._get_hacker_agent_for_mission(mission_id)
+            if not agent:
+                self.logger.warning("HackerAgent not available, falling back")
+                return None
+            
+            # 2. Build mission context
+            context = await self._build_agent_context(mission_id)
+            
+            # 3. Process with agent
+            self.logger.info(f"🧠 Processing with HackerAgent: {user_message[:50]}...")
+            agent_response = await agent.process(user_message, context)
+            
+            if not agent_response or not agent_response.content:
+                return None
+            
+            # 4. Create chat message from agent response
+            response_message = ChatMessage(
+                mission_id=UUID(mission_id),
+                role="system",
+                content=agent_response.content,
+                command=agent_response.commands_executed[0]["command"] if agent_response.commands_executed else None,
+                output=agent_response.commands_executed[0].get("output", []) if agent_response.commands_executed else None
+            )
+            
+            # 5. Broadcast plan if available
+            if agent_response.plan_tasks:
+                try:
+                    from ..api.websocket import broadcast_ai_plan
+                    await broadcast_ai_plan(
+                        mission_id=mission_id,
+                        tasks=agent_response.plan_tasks,
+                        message="Agent executed plan",
+                        reasoning=agent_response.thinking if hasattr(agent_response, 'thinking') else ""
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast plan: {e}")
+            
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
+            return response_message
+            
+        except Exception as e:
+            self.logger.error(f"Agent processing error: {e}", exc_info=True)
+            return None
+    
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
+    async def _get_hacker_agent_for_mission(self, mission_id: str):
+        """
+        Get or create HackerAgent instance for mission.
+        
+        Lazy initialization with caching per mission.
+        """
+        # Check if we already have an agent for this mission
+        if not hasattr(self, '_mission_agents'):
+            self._mission_agents = {}
+        
+        if mission_id not in self._mission_agents:
+            try:
+                from ..core.agent.hacker_agent import HackerAgent
+                from ..core.llm.service import get_llm_service
+                
+                # Get LLM service (will use DeepSeek if configured)
+                llm_service = get_llm_service()
+                
+                # Create agent
+                agent = HackerAgent(
+                    llm_service=llm_service,
+                    logger=self.logger
+                )
+                
+                self._mission_agents[mission_id] = agent
+                self.logger.info(f"✅ Created HackerAgent for mission {mission_id}")
+                
+            except Exception as e:
+                self.logger.error(f"Failed to create HackerAgent: {e}")
+                return None
+        
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
+        return self._mission_agents.get(mission_id)
+    
+    async def _prepare_vm_on_first_message(self, mission_id: str) -> bool:
+        """
+        Auto-prepare Firecracker VM on first chat message.
+        
+        ═══════════════════════════════════════════════════════════════
+        PHASE 1: Auto VM Preparation
+        ═══════════════════════════════════════════════════════════════
+        
+        Automatically provisions and prepares the execution environment
+        when user sends their first message, so they don't have to
+        manually click "Start" buttons.
+        
+        Args:
+            mission_id: Mission ID
+        
+        Returns:
+            True if VM is ready or being prepared, False on error
+        """
+        try:
+            # Get mission data
+            mission = await self.blackboard.get_mission(mission_id)
+            if not mission:
+                self.logger.warning(f"Mission {mission_id} not found for VM prep")
+                return False
+            
+            vm_status = mission.get("vm_status", "not_created")
+            
+            # If VM is not created, provision it
+            if vm_status == "not_created":
+                self.logger.info(f"🚀 Auto-preparing VM for mission {mission_id}...")
+                
+                # Update mission status to show we're preparing
+                await self.blackboard.update_mission(mission_id, {
+                    "vm_status": "provisioning",
+                    "status": "running"
+                })
+                
+                # Broadcast event to UI
+                try:
+                    from ..api.websocket import broadcast_mission_update
+                    await broadcast_mission_update(
+                        mission_id=mission_id,
+                        update={
+                            "vm_status": "provisioning",
+                            "message": "Preparing execution environment...",
+                            "progress": 0
+                        }
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast VM prep status: {e}")
+                
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
+                # Provision VM (async - don't wait)
+                # In production, this would call environment_manager.provision_vm()
+                # For now, we'll simulate with a placeholder
+                # TODO: Integrate with actual Firecracker provisioning
+                
+                return True
+            
+            # VM is already created or being created
+            return vm_status in ["provisioning", "ready", "running"]
+            
+        except Exception as e:
+            self.logger.error(f"Failed to auto-prepare VM: {e}", exc_info=True)
+            return False
+    
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
+    async def _build_agent_context(self, mission_id: str):
+        """
+        Build AgentContext with mission state for agent processing.
+        
+        Includes:
+        - Chat history
+        - Mission goals
+        - Targets
+        - Vulnerabilities
+        - VM status
+        - Previous findings
+        """
+        from ..core.agent.base import AgentContext
+        
+        # Get mission data
+        mission = await self.blackboard.get_mission(mission_id)
+        if not mission:
+            mission = {}
+        
+        # Get chat history
+        chat_history = self._chat_history.get(mission_id, [])
+        
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 1: Auto-prepare VM on first message
+        # ═══════════════════════════════════════════════════════════
+        if len(chat_history) <= 1:  # First user message
+            await self._prepare_vm_on_first_message(mission_id)
+        
+        # Create context
+        context = AgentContext(
+            mission_id=mission_id,
+            chat_history=[
+                {"role": msg.role, "content": msg.content}
+                for msg in chat_history[-10:]  # Last 10 messages
+            ]
+        )
+        
+        # Add mission state
+        context.vm_status = mission.get("vm_status", "not_created")
+        context.vm_ip = mission.get("vm_ip")
+        context.ssh_connected = mission.get("ssh_connected", False)
+        
+        # Add goals
+        goals = await self.blackboard.get_mission_goals(mission_id)
+        if goals:
+            context.goals = [
+                {"name": name, "status": status}
+                for name, status in goals.items()
+            ]
+        
+        # Add targets
+        targets = mission.get("targets", [])
+        context.targets = targets
+        
+        # Add vulnerabilities
+        vulns = mission.get("vulnerabilities", [])
+        context.vulnerabilities = vulns
+        
+        return context
+    
     async def _process_chat_message(
         self,
         mission_id: str,
@@ -1604,12 +1956,31 @@ class MissionController:
         """
         Process a chat message and generate a system response.
         
-        Uses LLM for intelligent responses with fallback to simple commands.
+        ═══════════════════════════════════════════════════════════════
+        PHASE 1: HackerAgent Integration
+        ═══════════════════════════════════════════════════════════════
+        Route chat messages through HackerAgent for intelligent processing.
+        The agent uses LLM to understand context, plan actions, and execute tools.
         """
         content = message.content.lower()
         original_content = message.content
         response_content = None
         
+        # ═══════════════════════════════════════════════════════════════
+        # PHASE 1: TRY HACKER AGENT FIRST (Intelligent Processing)
+        # ═══════════════════════════════════════════════════════════════
+        try:
+            agent_response = await self._process_with_agent(mission_id, original_content)
+            if agent_response:
+                return agent_response
+        except Exception as e:
+            self.logger.warning(f"Agent processing failed, falling back to simple mode: {e}")
+        
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
         # ═══════════════════════════════════════════════════════════════
         # SHELL ACCESS & COMMAND EXECUTION DETECTION
         # ═══════════════════════════════════════════════════════════════
@@ -1676,6 +2047,11 @@ class MissionController:
             except Exception as e:
                 self.logger.warning(f"Failed to broadcast shell ready: {e}")
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         # Handle command execution request
         elif is_run_request and extracted_command:
             # Execute the command via terminal_routes
@@ -1732,6 +2108,11 @@ class MissionController:
                 self.logger.error(f"Command execution error: {e}")
                 response_content = f"❌ Failed to execute command: {str(e)}"
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         # Check for simple commands (fast path)
         elif "status" in content:
             status = await self.get_mission_status(mission_id)
@@ -1834,6 +2215,11 @@ class MissionController:
                 self.logger.error(f"Environment check error: {e}")
                 response_content = "❌ Error checking environment status. Please try again."
         
+                raise handle_exception_gracefully(
+                    e,
+                    context='Mission operation',
+                    logger=self.logger
+                )
         elif "help" in content or "مساعدة" in content:
             response_content = (
                 "📖 **RAGLOX Agent Commands:**\n\n"
@@ -1977,6 +2363,11 @@ class MissionController:
                                             except Exception as e:
                                                 self.logger.error(f"Failed to create environment on-the-fly: {e}")
                                         
+                                                raise handle_exception_gracefully(
+                                                    e,
+                                                    context='Mission operation',
+                                                    logger=self.logger
+                                                )
                                         # ═══════════════════════════════════════════════════
                                         # Case 2: VM not created yet - trigger lazy provisioning
                                         # ═══════════════════════════════════════════════════
@@ -1999,6 +2390,11 @@ class MissionController:
                                             except Exception as e:
                                                 self.logger.error(f"Failed to update VM status: {e}")
                                             
+                                                raise handle_exception_gracefully(
+                                                    e,
+                                                    context='Mission operation',
+                                                    logger=self.logger
+                                                )
                                             # Start provisioning (non-blocking)
                                             try:
                                                 asyncio.create_task(provision_user_vm(
@@ -2011,6 +2407,11 @@ class MissionController:
                                             except Exception as e:
                                                 self.logger.error(f"Failed to start provisioning task: {e}")
                                             
+                                                raise handle_exception_gracefully(
+                                                    e,
+                                                    context='Mission operation',
+                                                    logger=self.logger
+                                                )
                                             self.logger.info(f"VM provisioning started for user {user_id_str}")
                                         
                                         # ═══════════════════════════════════════════════════
@@ -2073,6 +2474,11 @@ class MissionController:
                                                 except Exception as e:
                                                     self.logger.error(f"Failed to wake up VM: {e}")
                                 
+                                                    raise handle_exception_gracefully(
+                                                        e,
+                                                        context='Mission operation',
+                                                        logger=self.logger
+                                                    )
                                 if user_environments:
                                     # Use the first available connected environment
                                     agent_env = None
@@ -2124,6 +2530,11 @@ class MissionController:
                     self.logger.error(f"Environment execution error: {env_error}")
                     # Fall through to simulation mode
             
+                    raise handle_exception_gracefully(
+                        env_error,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
             # ═══════════════════════════════════════════════════════════════
             # NO EXECUTION AVAILABLE: Return clear error with VM status
             # ═══════════════════════════════════════════════════════════════
@@ -2247,7 +2658,13 @@ class MissionController:
     
     async def _get_llm_response(self, mission_id: str, user_message: str) -> str:
         """
-        Get LLM response for a chat message.
+        Get LLM response for a chat message using the HackerAgent.
+        
+        The HackerAgent provides:
+        - Tool-based execution (shell, network scanning, etc.)
+        - Hacker mindset for penetration testing
+        - Environment verification
+        - Intelligent planning
         
         Args:
             mission_id: Mission ID
@@ -2255,6 +2672,190 @@ class MissionController:
             
         Returns:
             LLM response or fallback message
+        """
+        try:
+            from ..core.agent import HackerAgent
+            from ..core.agent.base import AgentContext
+            
+            # Build agent context
+            context = await self._build_agent_context(mission_id)
+            
+            # Get or create the hacker agent
+            if not hasattr(self, '_hacker_agent'):
+                self._hacker_agent = HackerAgent(logger=self.logger)
+            
+            # Process message through the agent
+            response = await self._hacker_agent.process(user_message, context)
+            
+            # Broadcast AI plan if tasks were created
+            if response.plan_tasks:
+                try:
+                    from ..api.websocket import broadcast_ai_plan
+                    await broadcast_ai_plan(
+                        mission_id=mission_id,
+                        tasks=response.plan_tasks,
+                        message="Agent is executing plan",
+                        reasoning=f"Processing: {user_message[:50]}..."
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast AI plan: {e}")
+            
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
+            # Broadcast terminal output for commands executed
+            if response.commands_executed:
+                try:
+                    from ..api.websocket import broadcast_terminal_output
+                    for cmd in response.commands_executed:
+                        await broadcast_terminal_output(
+                            mission_id=mission_id,
+                            command=cmd.get("command", ""),
+                            output=cmd.get("output", ""),
+                            exit_code=cmd.get("exit_code", 0),
+                            status="completed" if cmd.get("success") else "failed"
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast terminal output: {e}")
+            
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
+            if response.content:
+                return response.content
+            else:
+                return "🤖 I've processed your request. Use 'help' to see available commands."
+                
+        except ImportError as e:
+            self.logger.warning(f"Agent module not available: {e}, using simple LLM")
+            return await self._get_simple_llm_response(mission_id, user_message)
+        except Exception as e:
+            self.logger.error(f"Agent error: {e}", exc_info=True)
+            return await self._get_simple_llm_response(mission_id, user_message)
+    
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
+    async def _build_agent_context(self, mission_id: str) -> "AgentContext":
+        """Build AgentContext from mission data."""
+        from ..core.agent.base import AgentContext
+        
+        # Get mission status
+        status = await self.get_mission_status(mission_id)
+        
+        # Get user VM info
+        vm_status = "unknown"
+        vm_ip = None
+        user_id = ""
+        org_id = ""
+        
+        if status:
+            user_id = status.get("created_by", "")
+            org_id = status.get("organization_id", "")
+            
+            # Try to get VM info from user metadata
+            if user_id:
+                try:
+                    from ..core.database.user_repository import UserRepository
+                    from ..core.database.connection import get_db_pool
+                    from uuid import UUID
+                    
+                    db_pool = get_db_pool()
+                    if db_pool:
+                        user_repo = UserRepository(db_pool)
+                        user = await user_repo.get_by_id(UUID(user_id))
+                        if user and user.metadata:
+                            vm_status = user.metadata.get("vm_status", "unknown")
+                            vm_ip = user.metadata.get("vm_ip")
+                except Exception as e:
+                    self.logger.warning(f"Could not get VM info: {e}")
+        
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Mission operation',
+                        logger=self.logger
+                    )
+        # Get mission data
+        targets = []
+        vulnerabilities = []
+        credentials = []
+        sessions = []
+        goals = []
+        
+        try:
+            blackboard = self.blackboard
+            
+            # Get targets
+            target_keys = await blackboard.get_mission_targets(mission_id)
+            for key in target_keys[:10]:  # Limit for context
+                target_id = key.replace("target:", "")
+                target_data = await blackboard.get_target(target_id)
+                if target_data:
+                    targets.append(target_data)
+            
+            # Get vulnerabilities
+            vuln_keys = await blackboard.get_mission_vulns(mission_id)
+            for key in vuln_keys[:10]:
+                vuln_id = key.replace("vuln:", "")
+                vuln_data = await blackboard.get_vulnerability(vuln_id)
+                if vuln_data:
+                    vulnerabilities.append(vuln_data)
+            
+            # Get credentials
+            cred_keys = await blackboard.get_mission_creds(mission_id)
+            for key in cred_keys[:10]:
+                cred_id = key.replace("cred:", "")
+                cred_data = await blackboard.get_credential(cred_id)
+                if cred_data:
+                    credentials.append(cred_data)
+            
+            # Get goals
+            goals_dict = await blackboard.get_mission_goals(mission_id)
+            goals = list(goals_dict.keys()) if goals_dict else []
+            
+        except Exception as e:
+            self.logger.warning(f"Error getting mission data for context: {e}")
+        
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
+        # Get chat history
+        chat_history = []
+        history = self._chat_history.get(mission_id, [])
+        for msg in history[-10:]:  # Last 10 messages
+            chat_history.append({
+                "role": msg.role,
+                "content": msg.content
+            })
+        
+        return AgentContext(
+            mission_id=mission_id,
+            user_id=user_id,
+            organization_id=org_id,
+            vm_status=vm_status,
+            vm_ip=vm_ip,
+            ssh_connected=self.environment_manager is not None,
+            targets=targets,
+            vulnerabilities=vulnerabilities,
+            credentials=credentials,
+            sessions=sessions,
+            goals=goals,
+            chat_history=chat_history
+        )
+    
+    async def _get_simple_llm_response(self, mission_id: str, user_message: str) -> str:
+        """
+        Fallback simple LLM response without agent capabilities.
+        
+        Used when HackerAgent is not available.
         """
         try:
             from ..core.llm.service import get_llm_service
@@ -2293,6 +2894,7 @@ Available commands the user can use:
 - 'pause': Pause the mission
 - 'resume': Resume the mission
 - 'pending': List pending approvals
+- 'run <command>': Execute a shell command
 - 'help': Show help message"""
 
             messages = [
@@ -2312,6 +2914,11 @@ Available commands the user can use:
             self.logger.error(f"LLM error: {e}")
             return f"🤖 Received your message: '{user_message}'. Use 'help' to see available commands."
     
+            raise handle_exception_gracefully(
+                e,
+                context='Mission operation',
+                logger=self.logger
+            )
     async def shutdown(self) -> None:
         """
         ═══════════════════════════════════════════════════════════════

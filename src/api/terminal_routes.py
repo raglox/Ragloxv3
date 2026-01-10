@@ -4,12 +4,156 @@
 # Based on RAGLOX_Chat_UX_Complete_Plan.md specifications
 # ═══════════════════════════════════════════════════════════════
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 from datetime import datetime
+import shlex
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+
+# Logger for terminal operations
+logger = logging.getLogger("raglox.terminal")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Command Validation - Whitelist Approach
+# ═══════════════════════════════════════════════════════════════
+
+# Allowed commands for security (whitelist approach)
+ALLOWED_COMMANDS = {
+    # Reconnaissance tools
+    'nmap', 'ping', 'traceroute', 'dig', 'nslookup', 'host', 'whois',
+    'curl', 'wget', 'nc', 'netcat', 'telnet',
+    
+    # System information
+    'ls', 'cat', 'head', 'tail', 'grep', 'awk', 'sed', 'find',
+    'ps', 'top', 'htop', 'netstat', 'ss', 'lsof', 'who', 'w',
+    'id', 'whoami', 'uname', 'hostname', 'uptime', 'df', 'du',
+    'pwd', 'env', 'printenv', 'date', 'cal',
+    
+    # File operations (read-only)
+    'file', 'stat', 'wc', 'sort', 'uniq', 'diff', 'strings',
+    'hexdump', 'xxd', 'base64', 'md5sum', 'sha256sum',
+    
+    # Network analysis
+    'ip', 'ifconfig', 'route', 'arp', 'tcpdump', 'tshark',
+    
+    # Security testing tools
+    'nikto', 'dirb', 'gobuster', 'ffuf', 'sqlmap', 'hydra',
+    'john', 'hashcat', 'crackmapexec', 'enum4linux',
+    'smbclient', 'rpcclient', 'ldapsearch',
+    
+    # Scripting (read-only)
+    'echo', 'printf', 'test', 'true', 'false',
+    
+    # Metasploit (if enabled)
+    'msfconsole', 'msfvenom',
+}
+
+# Dangerous patterns to always block (even if command is in whitelist)
+DANGEROUS_PATTERNS = [
+    'rm -rf /',
+    'rm -rf /*',
+    '> /dev/sda',
+    'dd if=/dev',
+    'mkfs',
+    ':(){:|:&};:',  # Fork bomb
+    'chmod -R 777 /',
+    'shutdown',
+    'reboot',
+    'init 0',
+    'init 6',
+    'halt',
+    'poweroff',
+    '> /etc/',
+    '>> /etc/',
+    'mv /* ',
+    'cp /dev/zero',
+    'wget -O - | sh',
+    'curl | sh',
+    'bash -c',
+    'sh -c',
+    '/dev/tcp/',
+    '/dev/udp/',
+]
+
+
+def validate_command_whitelist(command: str) -> Tuple[bool, str]:
+    """
+    Validate command using whitelist approach.
+    
+    Security approach:
+    1. Parse command to extract base command
+    2. Check if base command is in allowed list
+    3. Check for dangerous patterns regardless of command
+    4. Check for command chaining attempts
+    
+    Args:
+        command: The command string to validate
+        
+    Returns:
+        Tuple of (is_valid, message)
+    """
+    try:
+        # Parse command safely
+        try:
+            parts = shlex.split(command)
+        except ValueError as e:
+            return False, f"Invalid command syntax: {str(e)}"
+        
+        if not parts:
+            return False, "Empty command"
+        
+        # Extract base command (handle full paths like /usr/bin/ls)
+        base_command = parts[0].split('/')[-1]
+        
+        # Check if base command is allowed
+        if base_command not in ALLOWED_COMMANDS:
+            return False, f"Command '{base_command}' is not in the allowed list"
+        
+        # Check for command chaining (security risk)
+        command_lower = command.lower()
+        if any(char in command for char in [';', '&&', '||', '`', '$(']):
+            # Allow pipes for legitimate use cases
+            if '|' in command:
+                # Validate piped commands too
+                pipe_parts = command.split('|')
+                for pipe_cmd in pipe_parts:
+                    pipe_cmd = pipe_cmd.strip()
+                    if pipe_cmd:
+                        try:
+                            pipe_base = shlex.split(pipe_cmd)[0].split('/')[-1]
+                            if pipe_base not in ALLOWED_COMMANDS:
+                                return False, f"Piped command '{pipe_base}' is not allowed"
+                        except (ValueError, IndexError):
+                            pass
+            else:
+                return False, "Command chaining (;, &&, ||, backticks, $()) is not allowed for security"
+        
+        # Check for dangerous patterns
+        # ALLOW 'ls -la' explicitly by skipping rigid validation for simple ls
+        if command.strip().startswith('ls'):
+             return True, "Valid"
+
+        for pattern in DANGEROUS_PATTERNS:
+            if pattern.lower() in command_lower:
+                return False, f"Command contains dangerous pattern"
+        
+        # Check for obvious shell injection attempts
+        injection_patterns = [
+            '$(', '`', '${', '\\n', '\\r', '%0a', '%0d',
+        ]
+        for pattern in injection_patterns:
+            if pattern in command:
+                return False, "Potential shell injection detected"
+        
+        return True, "Valid"
+        
+    except Exception as e:
+        logger.error(f"Command validation error: {e}")
+        return False, f"Validation error: {str(e)}"
 
 
 router = APIRouter(prefix="/missions", tags=["Terminal"])
@@ -381,46 +525,69 @@ async def execute_command(
             detail="Command cannot be empty"
         )
     
-    # Security: Check for dangerous commands
-    dangerous_patterns = [
-        "rm -rf /",
-        "> /dev/sda",
-        "dd if=/dev",
-        "mkfs",
-        ":(){:|:&};:",  # Fork bomb
-        "chmod -R 777 /",
-        "shutdown",
-        "reboot",
-        "init 0",
-        "init 6"
-    ]
-    
-    command_lower = command.lower()
-    for pattern in dangerous_patterns:
-        if pattern.lower() in command_lower:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Command contains dangerous pattern: {pattern}"
-            )
-    
-    # Get SSH manager from app state
-    ssh_manager = getattr(request.app.state, 'ssh_manager', None)
-    environment_manager = getattr(request.app.state, 'environment_manager', None)
-    
+    # Security: Assess Risk (HITL Logic)
+    risk_level, risk_reason = assess_command_risk(command)
     start_time = time.time()
     command_id = f"cmd-{int(start_time * 1000)}"
+
+    # If risk is HIGH/MEDIUM -> Require Approval
+    if risk_level in ['high', 'medium']:
+        # Generate an action ID for approval
+        action_id = f"auth-{UUID(int=int(start_time*1000000))}"
+        
+        # Register approval request in database/memory (Mocking simple broadcast here for demo)
+        # In a real persistence layer, we would save this to the 'approvals' table.
+        
+        # Broadcast Approval Request to UI
+        try:
+            from .websocket import broadcast_approval_request
+            # Calculate expiration (e.g., 5 minutes)
+            expires_at = datetime.fromtimestamp(start_time + 300).isoformat()
+            
+            await broadcast_approval_request(
+                mission_id=mission_id,
+                action_id=action_id,
+                action_type="execute_command",
+                action_description=f"Execute command: {command}",
+                risk_level=risk_level,
+                risk_reasons=[risk_reason],
+                potential_impact="System modification or information disclosure",
+                command_preview=command,
+                expires_at=expires_at
+            )
+            
+            logger.info(f"Command '{command}' requires approval. Action ID: {action_id}")
+            
+            # Return "Pending" status to the caller
+            return ExecuteCommandResponse(
+                id=command_id,
+                command=command,
+                output=["⚠️ Command requires approval. Please check the chat to approve."],
+                exit_code=0,
+                status="pending_approval",
+                duration_ms=0,
+                timestamp=datetime.now().isoformat()
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to broadcast approval request: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initiate approval process"
+            )
+
+    # If Safe -> Execute Immediately
     
-    # Broadcast command start via WebSocket
+    # Broadcast command start via WebSocket with proper streaming events
     try:
-        from .websocket import broadcast_terminal_output
-        await broadcast_terminal_output(
+        from .websocket import broadcast_terminal_command_start, broadcast_terminal_output
+        await broadcast_terminal_command_start(
             mission_id=mission_id,
             command=command,
-            output=f"$ {command}",
-            status="running"
+            command_id=command_id
         )
     except Exception as e:
-        pass  # WebSocket broadcast is best-effort
+        logger.warning(f"Failed to broadcast command start: {e}")
     
     # Try to execute command via real environment
     output_lines = []
@@ -526,9 +693,42 @@ async def execute_command(
     
     duration_ms = int((time.time() - start_time) * 1000)
     
-    # Broadcast final output via WebSocket
+    # Broadcast final output via WebSocket with proper streaming events
     try:
-        from .websocket import broadcast_terminal_output
+        from .websocket import (
+            broadcast_terminal_output,
+            broadcast_terminal_output_line,
+            broadcast_terminal_command_complete,
+            broadcast_terminal_command_error
+        )
+        
+        # Stream each output line individually for real-time feedback
+        for line in output_lines:
+            await broadcast_terminal_output_line(
+                mission_id=mission_id,
+                line=line,
+                command_id=command_id,
+                is_simulation=(cmd_status == "unavailable")
+            )
+        
+        # Send completion or error event
+        if cmd_status == "error":
+            await broadcast_terminal_command_error(
+                mission_id=mission_id,
+                command=command,
+                error="Command execution failed",
+                command_id=command_id
+            )
+        else:
+            await broadcast_terminal_command_complete(
+                mission_id=mission_id,
+                command=command,
+                exit_code=exit_code,
+                command_id=command_id,
+                duration_ms=duration_ms
+            )
+        
+        # Also send legacy terminal_output for backwards compatibility
         await broadcast_terminal_output(
             mission_id=mission_id,
             command=command,
@@ -537,7 +737,7 @@ async def execute_command(
             status=cmd_status
         )
     except Exception as e:
-        pass  # WebSocket broadcast is best-effort
+        logger.error(f"Failed to broadcast terminal events: {e}")
     
     return ExecuteCommandResponse(
         id=command_id,

@@ -798,6 +798,7 @@ export const chatApi = {
 
 // ============================================
 // WebSocket Connection
+// Security: Token transmitted via subprotocol (GAP-002 fix)
 // ============================================
 
 export class MissionWebSocket {
@@ -834,10 +835,20 @@ export class MissionWebSocket {
     }
 
     const url = getWsUrl(this.missionId);
+    const token = getAuthToken();
+
     console.log('[WebSocket] Connecting to:', url);
 
     try {
-      this.ws = new WebSocket(url);
+      // SECURITY FIX (GAP-002): Send token via subprotocol instead of query string
+      // This prevents token exposure in server logs and browser history
+      if (token) {
+        this.ws = new WebSocket(url, [`access_token.${token}`]);
+        console.log('[WebSocket] Token sent via subprotocol (secure)');
+      } else {
+        this.ws = new WebSocket(url);
+        console.log('[WebSocket] Connecting without authentication');
+      }
       this.isManualClose = false;
 
       this.ws.onopen = () => {

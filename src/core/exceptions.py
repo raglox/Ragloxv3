@@ -1271,6 +1271,89 @@ def sanitize_error_message(error: Exception) -> str:
     return message
 
 
+def handle_exception_gracefully(
+    exc: Exception,
+    context: Optional[str] = None,
+    logger: Optional[Any] = None,
+    log_level: str = "error"
+) -> RAGLOXException:
+    """
+    Handle any exception gracefully by wrapping it in a RAGLOXException.
+    
+    This is a SAFE way to improve generic except Exception handlers:
+    - Preserves the original exception chain
+    - Adds context information
+    - Sanitizes sensitive data
+    - Enables proper logging
+    
+    Args:
+        exc: The caught exception
+        context: Additional context (e.g., "Database operation", "API call")
+        logger: Logger instance (optional)
+        log_level: Log level to use
+        
+    Returns:
+        RAGLOXException wrapping the original exception
+        
+    Example:
+        try:
+            risky_operation()
+        except Exception as e:
+            raise handle_exception_gracefully(
+                e, 
+                context="Risky operation", 
+                logger=self.logger
+            )
+    """
+    # Sanitize the error message
+    sanitized_msg = sanitize_error_message(exc)
+    
+    # Determine appropriate RAGLOX exception type
+    exc_type = type(exc).__name__
+    
+    # Map common stdlib exceptions to RAGLOX exceptions
+    exception_map = {
+        'ConnectionError': NetworkException,
+        'TimeoutError': ConnectionTimeoutError,
+        'ValueError': ValidationException,
+        'KeyError': NotFoundError,
+        'FileNotFoundError': FileReadError,
+        'PermissionError': AuthorizationError,
+    }
+    
+    wrapped_class = exception_map.get(exc_type, RAGLOXException)
+    
+    # Build error message
+    msg_parts = []
+    if context:
+        msg_parts.append(context)
+    msg_parts.append(f"[{exc_type}] {sanitized_msg}")
+    message = ": ".join(msg_parts)
+    
+    # Log if logger provided
+    if logger:
+        log_func = getattr(logger, log_level, logger.error)
+        log_func(
+            f"Exception handled gracefully: {message}",
+            exc_info=True,
+            extra={
+                "original_exception_type": exc_type,
+                "context": context,
+                "has_cause": exc.__cause__ is not None
+            }
+        )
+    
+    # Create wrapped exception
+    if wrapped_class == RAGLOXException:
+        return wrap_exception(exc, message=message)
+    else:
+        try:
+            return wrapped_class(message=message, original_error=exc)
+        except TypeError:
+            # Fallback if constructor doesn't match
+            return wrap_exception(exc, message=message)
+
+
 def get_exception_for_status_code(status_code: int, message: str = "") -> APIException:
     """
     Get appropriate API exception for HTTP status code.
@@ -1297,3 +1380,143 @@ def get_exception_for_status_code(status_code: int, message: str = "") -> APIExc
     if callable(exception_class):
         return exception_class(message)
     return exception_class(message)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Additional Exceptions for SEC-01 Refactoring
+# ═══════════════════════════════════════════════════════════════
+
+class ExecutorException(RAGLOXException):
+    """Base exception for executor-related errors."""
+    
+    def __init__(
+        self,
+        message: str,
+        executor_type: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        original_error: Optional[Exception] = None
+    ):
+        self.executor_type = executor_type
+        super().__init__(
+            message=message,
+            error_code="EXECUTOR_ERROR",
+            details={"executor_type": executor_type, **(details or {})},
+            original_error=original_error
+        )
+
+
+class CommandExecutionError(ExecutorException):
+    """Command execution failed."""
+    
+    def __init__(
+        self,
+        command: str,
+        exit_code: int,
+        stderr: str = "",
+        details: Optional[Dict[str, Any]] = None,
+        original_error: Optional[Exception] = None
+    ):
+        super().__init__(
+            message=f"Command execution failed with exit code {exit_code}: {command}",
+            details={
+                "command": command,
+                "exit_code": exit_code,
+                "stderr": stderr,
+                **(details or {})
+            },
+            original_error=original_error
+        )
+        self.error_code = "COMMAND_EXECUTION_ERROR"
+        self.command = command
+        self.exit_code = exit_code
+        self.stderr = stderr
+
+
+class SSHConnectionError(NetworkException):
+    """SSH connection failed."""
+    
+    def __init__(
+        self,
+        host: str,
+        port: int = 22,
+        username: Optional[str] = None,
+        reason: str = "Connection failed",
+        details: Optional[Dict[str, Any]] = None,
+        original_error: Optional[Exception] = None
+    ):
+        super().__init__(
+            message=f"SSH connection to {username}@{host}:{port} failed: {reason}",
+            host=host,
+            port=port,
+            details={"username": username, "reason": reason, **(details or {})},
+            original_error=original_error
+        )
+        self.error_code = "SSH_CONNECTION_ERROR"
+        self.username = username
+        self.reason = reason
+
+
+class WebSocketException(RAGLOXException):
+    """WebSocket-related exception."""
+    
+    def __init__(
+        self,
+        message: str,
+        client_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        original_error: Optional[Exception] = None
+    ):
+        self.client_id = client_id
+        super().__init__(
+            message=message,
+            error_code="WEBSOCKET_ERROR",
+            details={"client_id": client_id, **(details or {})},
+            original_error=original_error
+        )
+
+
+class ResourceCleanupError(RAGLOXException):
+    """Resource cleanup failed."""
+    
+    def __init__(
+        self,
+        resource_type: str,
+        resource_id: str,
+        reason: str,
+        details: Optional[Dict[str, Any]] = None,
+        original_error: Optional[Exception] = None
+    ):
+        super().__init__(
+            message=f"Failed to cleanup {resource_type} '{resource_id}': {reason}",
+            error_code="RESOURCE_CLEANUP_ERROR",
+            details={
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "reason": reason,
+                **(details or {})
+            },
+            original_error=original_error
+        )
+        self.resource_type = resource_type
+        self.resource_id = resource_id
+        self.reason = reason
+
+
+class DataSerializationError(DataParsingException):
+    """Failed to serialize data."""
+    
+    def __init__(
+        self,
+        data_type: str,
+        reason: str,
+        details: Optional[Dict[str, Any]] = None,
+        original_error: Optional[Exception] = None
+    ):
+        super().__init__(
+            message=f"Failed to serialize {data_type}: {reason}",
+            data_type=data_type,
+            details={"reason": reason, **(details or {})},
+            original_error=original_error
+        )
+        self.error_code = "DATA_SERIALIZATION_ERROR"
+        self.reason = reason
