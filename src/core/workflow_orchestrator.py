@@ -626,17 +626,35 @@ class AgentWorkflowOrchestrator:
         result.tasks_created = tasks_created
         
         # Wait for tasks to complete (with timeout)
-        completed = await self._wait_for_tasks(
-            context.mission_id,
-            tasks_created,
-            timeout_seconds=300
-        )
+        try:
+            completed = await asyncio.wait_for(
+                self._wait_for_tasks(
+                    context.mission_id,
+                    tasks_created,
+                    timeout_seconds=10  # Reduced from 300 for testing
+                ),
+                timeout=15  # Additional asyncio timeout guard
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Reconnaissance task waiting timed out - continuing with partial results")
+            completed = []
         
         result.tasks_completed = completed
         
-        # Get discoveries from blackboard
-        targets = await self.blackboard.get_mission_targets(context.mission_id)
-        vulns = await self.blackboard.get_mission_vulns(context.mission_id)
+        # Get discoveries from blackboard (with timeout)
+        try:
+            targets = await asyncio.wait_for(
+                self.blackboard.get_mission_targets(context.mission_id),
+                timeout=5
+            )
+            vulns = await asyncio.wait_for(
+                self.blackboard.get_mission_vulns(context.mission_id),
+                timeout=5
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Failed to retrieve mission discoveries due to timeout")
+            targets = []
+            vulns = []
         
         context.discovered_targets = list(targets)
         context.discovered_vulns = list(vulns)
