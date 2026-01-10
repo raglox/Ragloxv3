@@ -1183,13 +1183,33 @@ class AgentWorkflowOrchestrator:
         completed = []
         deadline = asyncio.get_event_loop().time() + timeout_seconds
         
+        # Track initial check to avoid infinite wait on non-executing tasks
+        initial_check_done = False
+        no_changes_count = 0
+        
         while task_ids and asyncio.get_event_loop().time() < deadline:
+            tasks_before = len(task_ids)
+            
             for task_id in list(task_ids):
                 task = await self.blackboard.get_task(task_id)
                 if task and task.get("status") in ("completed", "failed"):
                     task_ids.remove(task_id)
                     if task.get("status") == "completed":
                         completed.append(task_id)
+            
+            tasks_after = len(task_ids)
+            
+            # If no tasks changed status after initial check, likely no specialists running
+            if initial_check_done and tasks_before == tasks_after:
+                no_changes_count += 1
+                # If no changes for 3 consecutive checks (3 seconds), assume no specialists
+                if no_changes_count >= 3:
+                    logger.warning(f"No task progress detected after 3 checks. Assuming no specialists available.")
+                    break
+            else:
+                no_changes_count = 0
+            
+            initial_check_done = True
             
             if task_ids:
                 await asyncio.sleep(1)

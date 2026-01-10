@@ -730,7 +730,7 @@ class TestRealInfrastructureIntegration:
         # Verify task exists in Blackboard
         task = await orchestrator.blackboard.get_task(task_id)
         assert task is not None
-        assert task["task_type"] == "network_scan"
+        assert task["type"] == TaskType.NETWORK_SCAN.value  # Use 'type' not 'task_type'
         
         print(f"✅ Task created in Blackboard: {task_id}")
 
