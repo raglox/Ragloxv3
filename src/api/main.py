@@ -10,6 +10,9 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+
+# SEC-01: Enhanced exception handling
+from ..core.exceptions import handle_exception_gracefully
 from fastapi.responses import JSONResponse
 
 from ..core.config import get_settings
@@ -65,11 +68,18 @@ db_pool = None  # PostgreSQL connection pool
 
 
 def init_llm_service(settings) -> None:
-    """Initialize LLM service with configured provider."""
+    """
+    Initialize LLM service with configured provider.
+    
+    ═══════════════════════════════════════════════════════════════
+    PHASE 1: Added DeepSeek provider support
+    ═══════════════════════════════════════════════════════════════
+    """
     try:
         from ..core.llm import (
             LLMService, 
             get_llm_service, 
+            DeepSeekProvider,
             BlackboxAIProvider,
             OpenAIProvider,
             MockLLMProvider,
@@ -83,12 +93,41 @@ def init_llm_service(settings) -> None:
         api_key = settings.effective_llm_api_key
         provider_name = settings.llm_provider.lower()
         
-        if not api_key:
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 1: Check for DeepSeek API key first
+        # ═══════════════════════════════════════════════════════════
+        deepseek_key = getattr(settings, 'deepseek_api_key', None)
+        if not deepseek_key:
+            import os
+            deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        
+        if not api_key and not deepseek_key:
             logger.warning("No LLM API key configured - using mock provider")
             provider_name = "mock"
         
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 1: DeepSeek Provider (RECOMMENDED)
+        # ═══════════════════════════════════════════════════════════
+        if provider_name == "deepseek":
+            if not deepseek_key:
+                logger.error("DeepSeek provider selected but no API key found")
+                provider_name = "mock"
+            else:
+                config = LLMConfig(
+                    provider_type=ProviderType.OPENAI,  # Compatible API
+                    api_key=deepseek_key,
+                    api_base="https://api.deepseek.com",
+                    model=settings.llm_model or "deepseek-reasoner",
+                    temperature=settings.llm_temperature,
+                    max_tokens=settings.llm_max_tokens or 8000,
+                    timeout=settings.llm_timeout,
+                )
+                provider = DeepSeekProvider(config)
+                service.register_provider("deepseek", provider, set_as_default=True)
+                logger.info("🧠 LLM Service initialized with DeepSeek provider (REASONING MODE)")
+        
         # Configure based on provider
-        if provider_name == "blackbox":
+        elif provider_name == "blackbox":
             config = LLMConfig(
                 provider_type=ProviderType.OPENAI,  # BlackBox uses OpenAI-compatible API
                 api_key=api_key,
@@ -124,7 +163,12 @@ def init_llm_service(settings) -> None:
             logger.info("🤖 LLM Service initialized with Mock provider")
             
     except Exception as e:
-        logger.error(f"Failed to initialize LLM service: {e}")
+        logger.error(f"Failed to initialize LLM service: {e}", exc_info=True)
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
 
 
 @asynccontextmanager
@@ -170,6 +214,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         app.state.user_repo = None
         app.state.org_repo = None
         app.state.mission_repo = None
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
     
     # ═══════════════════════════════════════════════════════════════
     # INTEGRATION: Initialize Shutdown Manager
@@ -219,6 +268,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
             logger.error(f"❌ Metasploit initialization failed: {e}")
             logger.warning("   Falling back to SIMULATION mode")
             metasploit_adapter = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     else:
         logger.info("🔵 Real Exploitation DISABLED (USE_REAL_EXPLOITS=false)")
         logger.info("   System running in SIMULATION mode")
@@ -256,6 +310,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ C2 Session Manager initialization failed: {e}")
             c2_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     
     # Store C2SessionManager in app state
     app.state.c2_manager = c2_manager
@@ -293,6 +352,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ Firecracker initialization failed: {e}")
             vm_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     
     elif settings.use_oneprovider:
         try:
@@ -318,6 +382,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ OneProvider initialization failed: {e}")
             vm_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     else:
         logger.info("☁️ Cloud Provider Integration DISABLED")
         logger.info("   Set CLOUD_PROVIDER=firecracker or CLOUD_PROVIDER=oneprovider to enable")
@@ -346,6 +415,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ SSH Connection Manager initialization failed: {e}")
             ssh_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     else:
         logger.info("🔐 SSH Connection Manager DISABLED")
     
@@ -366,6 +440,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception as e:
             logger.error(f"❌ Environment Manager initialization failed: {e}")
             environment_manager = None
+            raise handle_exception_gracefully(
+                e,
+                context='API operation',
+                logger=logger
+            )
     
     # Store in app state
     app.state.vm_manager = vm_manager
@@ -410,6 +489,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.error(f"❌ Token Store initialization failed: {e}")
         app.state.token_store = None
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
     
     # ===================================================================
     # Initialize Billing Service (Stripe) - SaaS
@@ -431,6 +515,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.error(f"❌ Billing Service initialization failed: {e}")
         app.state.billing_service = None
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
     
     # Initialize Controller with EnvironmentManager for VM/SSH execution
     controller = MissionController(
@@ -477,6 +566,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     except Exception as e:
         logger.error(f"❌ Workflow Orchestrator initialization failed: {e}")
         app.state.workflow_orchestrator = None
+        raise handle_exception_gracefully(
+            e,
+            context='API operation',
+            logger=logger
+        )
     
     # ═══════════════════════════════════════════════════════════════
     # INTEGRATION: Setup signal handlers for graceful shutdown

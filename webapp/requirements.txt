@@ -62,6 +62,14 @@ langchain>=0.1.0,<1.0.0
 langchain-openai>=0.0.5,<1.0.0
 
 # ─────────────────────────────────────────────────────────────────────────────────
+# Vector Search & Embeddings (Phase 3.5: RAG Integration)
+# ─────────────────────────────────────────────────────────────────────────────────
+faiss-cpu>=1.8.0,<2.0.0                    # Fast similarity search (TIER 2)
+sentence-transformers>=2.5.0,<3.0.0        # Embedding generation
+numpy>=1.26.0,<2.0.0                       # Vector operations
+torch>=2.1.0,<3.0.0                        # Required by sentence-transformers
+
+# ─────────────────────────────────────────────────────────────────────────────────
 # Data Processing
 # ─────────────────────────────────────────────────────────────────────────────────
 python-multipart>=0.0.9,<1.0.0

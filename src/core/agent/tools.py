@@ -718,6 +718,447 @@ class SystemInfoTool(BaseTool):
 
 
 # ═══════════════════════════════════════════════════════════════
+# RAGLOX Intelligence Tools - RX Modules & Nuclei
+# ═══════════════════════════════════════════════════════════════
+
+class RXModuleExecuteTool(BaseTool):
+    """
+    Execute an RX Module (Atomic Red Team technique)
+    
+    RX Modules are pre-built attack techniques from Atomic Red Team.
+    Use this tool to execute specific MITRE ATT&CK techniques with
+    precise commands and proper prerequisites.
+    
+    Example usage:
+    ```
+    rx_execute(
+        module_id="rx-t1003_001-010",
+        target="10.0.0.5",
+        variables={"output_file": "/tmp/lsass.dmp"}
+    )
+    ```
+    """
+    
+    name = "rx_execute"
+    description = (
+        "Execute an RX Module (Atomic Red Team technique). "
+        "RX modules provide tested commands for specific ATT&CK techniques. "
+        "Use this for precise exploitation with known attack patterns."
+    )
+    category = ToolCategory.EXPLOITATION
+    risk_level = "high"
+    requires_approval = True
+    
+    def get_parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="module_id",
+                description=(
+                    "RX Module ID (e.g., 'rx-t1003_001-010'). "
+                    "Get this from tactical intelligence or knowledge base."
+                ),
+                type="string",
+                required=True
+            ),
+            ToolParameter(
+                name="target",
+                description="Target IP address or hostname",
+                type="string",
+                required=False
+            ),
+            ToolParameter(
+                name="variables",
+                description=(
+                    "Variables to substitute in the command "
+                    "(e.g., {'output_file': '/tmp/output.txt'})"
+                ),
+                type="object",
+                required=False,
+                default={}
+            ),
+            ToolParameter(
+                name="check_prerequisites",
+                description="Check prerequisites before execution",
+                type="boolean",
+                required=False,
+                default=True
+            )
+        ]
+    
+    async def execute(
+        self,
+        ssh_executor: Any,
+        module_id: str,
+        target: Optional[str] = None,
+        variables: Optional[Dict[str, str]] = None,
+        check_prerequisites: bool = True,
+        **kwargs
+    ) -> ToolResult:
+        """Execute RX Module"""
+        start_time = datetime.utcnow()
+        variables = variables or {}
+        
+        try:
+            # Get knowledge base
+            from ..knowledge import get_knowledge as get_embedded_knowledge
+            knowledge = get_embedded_knowledge()
+            
+            if not knowledge or not knowledge.is_loaded:
+                return ToolResult(
+                    success=False,
+                    error="Knowledge base not available",
+                    tool_name=self.name,
+                    summary="Failed: Knowledge base not loaded"
+                )
+            
+            # Get module
+            module = knowledge.get_module(module_id)
+            if not module:
+                return ToolResult(
+                    success=False,
+                    error=f"RX Module {module_id} not found in knowledge base",
+                    tool_name=self.name,
+                    summary=f"Failed: Unknown module {module_id}"
+                )
+            
+            # Extract module info
+            technique_id = module.get('technique_id', 'unknown')
+            technique_name = module.get('technique_name', 'Unknown')
+            execution = module.get('execution', {})
+            command_template = execution.get('command', '')
+            platforms = execution.get('platforms', [])
+            elevation_required = execution.get('elevation_required', False)
+            prerequisites = module.get('prerequisites', [])
+            
+            self.logger.info(
+                f"Executing RX Module {module_id}: {technique_name} ({technique_id})"
+            )
+            
+            # Platform check
+            if platforms and not any(p.lower() in ['linux', 'unix'] for p in platforms):
+                return ToolResult(
+                    success=False,
+                    error=f"Module requires platform: {', '.join(platforms)}. Current: Linux",
+                    tool_name=self.name,
+                    summary=f"Failed: Platform mismatch"
+                )
+            
+            # Prerequisites check
+            if check_prerequisites and prerequisites:
+                prereq_results = []
+                for prereq in prerequisites:
+                    check_cmd = prereq.get('check_command', '')
+                    if check_cmd:
+                        check_result = await ssh_executor.execute_command(check_cmd)
+                        prereq_results.append({
+                            'description': prereq.get('description', ''),
+                            'check': check_cmd,
+                            'passed': check_result.exit_code == 0,
+                            'output': check_result.stdout[:200]
+                        })
+                
+                failed_prereqs = [p for p in prereq_results if not p['passed']]
+                if failed_prereqs:
+                    return ToolResult(
+                        success=False,
+                        error=f"Prerequisites not met: {len(failed_prereqs)} checks failed",
+                        tool_name=self.name,
+                        data={'prerequisite_checks': prereq_results},
+                        summary=(
+                            f"Failed: {len(failed_prereqs)} prerequisite(s) not met. "
+                            "Install required tools first."
+                        )
+                    )
+            
+            # Build command with variable substitution
+            command = command_template
+            
+            # Substitute module variables
+            module_vars = module.get('variables', [])
+            for var_def in module_vars:
+                var_name = var_def.get('name', '')
+                if var_name in variables:
+                    # User provided value
+                    value = variables[var_name]
+                else:
+                    # Use default
+                    value = var_def.get('default_value', '')
+                
+                # Replace ${var_name} and $var_name patterns
+                command = command.replace(f"${{{var_name}}}", str(value))
+                command = command.replace(f"${var_name}", str(value))
+            
+            # Replace target placeholder
+            if target:
+                command = command.replace("${target}", target)
+                command = command.replace("$target", target)
+            
+            # Execute command
+            self.logger.info(f"Executing command: {command}")
+            
+            result = await ssh_executor.execute_command(
+                command,
+                timeout=60  # 60 second timeout
+            )
+            
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            
+            success = result.exit_code == 0
+            
+            return ToolResult(
+                success=success,
+                output=result.stdout,
+                error=result.stderr if not success else None,
+                tool_name=self.name,
+                command=command,
+                exit_code=result.exit_code,
+                duration_ms=duration_ms,
+                data={
+                    'module_id': module_id,
+                    'technique_id': technique_id,
+                    'technique_name': technique_name,
+                    'platform': platforms,
+                    'elevation_required': elevation_required
+                },
+                summary=(
+                    f"✅ Executed {technique_name} ({technique_id})" if success
+                    else f"❌ Failed to execute {technique_name} ({technique_id})"
+                ),
+                next_steps=[
+                    "Analyze output for successful execution",
+                    "Check if objectives were achieved",
+                    "Execute cleanup command if needed"
+                ] if success else [
+                    "Review error message",
+                    "Check prerequisites",
+                    "Try alternative module or technique"
+                ]
+            )
+            
+        except Exception as e:
+            self.logger.error(f"RX Module execution failed: {e}", exc_info=True)
+            return ToolResult(
+                success=False,
+                error=str(e),
+                tool_name=self.name,
+                summary=f"Failed: {str(e)}"
+            )
+
+
+class NucleiScanTool(BaseTool):
+    """
+    Run Nuclei vulnerability scan with specific templates
+    
+    Nuclei is a fast vulnerability scanner based on templates.
+    Use this tool to scan targets for known CVEs, misconfigurations,
+    and security issues.
+    
+    Example usage:
+    ```
+    nuclei_scan(
+        target="http://10.0.0.5",
+        templates=["CVE-2021-41773", "CVE-2021-42013"],
+        severity="critical,high"
+    )
+    ```
+    """
+    
+    name = "nuclei_scan"
+    description = (
+        "Run Nuclei vulnerability scan. "
+        "Use specific template IDs for targeted scanning of known CVEs. "
+        "Faster and more precise than full vulnerability scans."
+    )
+    category = ToolCategory.VULNERABILITY
+    risk_level = "low"
+    requires_approval = False
+    
+    def get_parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="target",
+                description="Target URL or IP (e.g., 'http://10.0.0.5' or '10.0.0.5')",
+                type="string",
+                required=True
+            ),
+            ToolParameter(
+                name="templates",
+                description=(
+                    "List of Nuclei template IDs to use "
+                    "(e.g., ['CVE-2021-41773', 'CVE-2021-42013']). "
+                    "Get these from tactical intelligence."
+                ),
+                type="array",
+                required=False,
+                default=[]
+            ),
+            ToolParameter(
+                name="severity",
+                description=(
+                    "Minimum severity to scan for: "
+                    "'critical', 'high', 'medium', 'low', 'info'"
+                ),
+                type="string",
+                required=False,
+                enum=["critical", "high", "medium", "low", "info"],
+                default="high"
+            ),
+            ToolParameter(
+                name="tags",
+                description=(
+                    "Template tags to include (e.g., ['cve', 'apache', 'rce'])"
+                ),
+                type="array",
+                required=False,
+                default=[]
+            ),
+            ToolParameter(
+                name="timeout",
+                description="Scan timeout in seconds",
+                type="integer",
+                required=False,
+                default=60
+            )
+        ]
+    
+    async def execute(
+        self,
+        ssh_executor: Any,
+        target: str,
+        templates: Optional[List[str]] = None,
+        severity: str = "high",
+        tags: Optional[List[str]] = None,
+        timeout: int = 60,
+        **kwargs
+    ) -> ToolResult:
+        """Execute Nuclei scan"""
+        start_time = datetime.utcnow()
+        templates = templates or []
+        tags = tags or []
+        
+        try:
+            # Build nuclei command
+            cmd_parts = ["nuclei", "-u", target, "-json"]
+            
+            # Add templates
+            if templates:
+                # Get template files from knowledge base
+                from ..knowledge import get_knowledge as get_embedded_knowledge
+                knowledge = get_embedded_knowledge()
+                
+                if knowledge and knowledge.is_loaded:
+                    template_paths = []
+                    for template_id in templates:
+                        template = knowledge.get_nuclei_template(template_id)
+                        if template:
+                            file_path = template.get('file_path', '')
+                            if file_path:
+                                template_paths.append(file_path)
+                    
+                    if template_paths:
+                        cmd_parts.extend(["-t", ",".join(template_paths)])
+                    else:
+                        # Fallback: use template IDs directly
+                        cmd_parts.extend(["-t", ",".join(templates)])
+                else:
+                    # Knowledge base not available, use template IDs
+                    cmd_parts.extend(["-t", ",".join(templates)])
+            
+            # Add severity filter
+            if severity:
+                cmd_parts.extend(["-s", severity])
+            
+            # Add tags
+            if tags:
+                for tag in tags:
+                    cmd_parts.extend(["-tags", tag])
+            
+            # Construct command
+            command = " ".join(cmd_parts)
+            
+            self.logger.info(f"Running Nuclei scan: {command}")
+            
+            # Execute scan
+            result = await ssh_executor.execute_command(
+                command,
+                timeout=timeout
+            )
+            
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            
+            # Parse JSON output
+            findings = []
+            if result.stdout:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        try:
+                            finding = json.loads(line)
+                            findings.append({
+                                'template_id': finding.get('template-id', 'unknown'),
+                                'name': finding.get('info', {}).get('name', 'Unknown'),
+                                'severity': finding.get('info', {}).get('severity', 'unknown'),
+                                'matched_at': finding.get('matched-at', target),
+                                'description': finding.get('info', {}).get('description', ''),
+                                'cve_id': finding.get('info', {}).get('classification', {}).get('cve-id', []),
+                                'cvss_score': finding.get('info', {}).get('classification', {}).get('cvss-score', 0)
+                            })
+                        except json.JSONDecodeError:
+                            pass
+            
+            success = result.exit_code == 0 or len(findings) > 0
+            
+            # Build summary
+            if findings:
+                severity_counts = {}
+                for f in findings:
+                    sev = f['severity']
+                    severity_counts[sev] = severity_counts.get(sev, 0) + 1
+                
+                summary_parts = [f"Found {len(findings)} vulnerability/ies:"]
+                for sev, count in sorted(severity_counts.items()):
+                    summary_parts.append(f"  {sev.upper()}: {count}")
+                summary = "\n".join(summary_parts)
+            else:
+                summary = "No vulnerabilities found"
+            
+            return ToolResult(
+                success=success,
+                output=result.stdout[:2000],  # Truncate long output
+                error=result.stderr if not success and not findings else None,
+                tool_name=self.name,
+                command=command,
+                exit_code=result.exit_code,
+                duration_ms=duration_ms,
+                findings=findings,
+                data={
+                    'target': target,
+                    'templates_used': templates,
+                    'severity_filter': severity,
+                    'total_findings': len(findings)
+                },
+                summary=summary,
+                next_steps=[
+                    "Review findings for exploitable vulnerabilities",
+                    "Cross-reference CVEs with RX modules",
+                    "Plan exploitation strategy"
+                ] if findings else [
+                    "Try different templates or tags",
+                    "Lower severity filter",
+                    "Check if target is accessible"
+                ]
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Nuclei scan failed: {e}", exc_info=True)
+            return ToolResult(
+                success=False,
+                error=str(e),
+                tool_name=self.name,
+                summary=f"Failed: {str(e)}"
+            )
+
+
+# ═══════════════════════════════════════════════════════════════
 # Tool Registry
 # ═══════════════════════════════════════════════════════════════
 
@@ -746,6 +1187,9 @@ class ToolRegistry:
             ProcessListTool(),
             NetworkInfoTool(),
             SystemInfoTool(),
+            # RAGLOX Intelligence Tools
+            RXModuleExecuteTool(),
+            NucleiScanTool(),
         ]
         
         for tool in default_tools:

@@ -20,20 +20,20 @@ class TestSettings:
         assert settings.app_version == "3.0.0"
         assert settings.debug == False
         
-        # API defaults
-        assert settings.api_host == "0.0.0.0"
-        assert settings.api_port == 8000
+        # API defaults (updated: 127.0.0.1 is the new default)
+        assert settings.api_host == "127.0.0.1"
+        assert settings.api_port == 8001  # Updated default port
         
-        # Redis defaults
+        # Redis defaults (updated: 10 is the new default)
         assert "redis://" in settings.redis_url
-        assert settings.redis_max_connections == 100
+        assert settings.redis_max_connections == 10
         
         # PostgreSQL defaults
         assert "postgresql://" in settings.database_url
         
-        # JWT defaults
+        # JWT defaults (updated: 1 hour expiration)
         assert settings.jwt_algorithm == "HS256"
-        assert settings.jwt_expiration_hours == 24
+        assert settings.jwt_expiration_hours == 1
     
     def test_cors_origins_parsing(self):
         """Test CORS origins string is parsed to list."""

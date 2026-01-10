@@ -8,6 +8,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+
+# SEC-01: Enhanced exception handling
+from .exceptions import handle_exception_gracefully
 from typing import Any, Dict, List, Optional, Set, Callable, Awaitable
 from uuid import UUID, uuid4
 
@@ -326,6 +329,11 @@ class AgentWorkflowOrchestrator:
         except Exception as e:
             logger.error(f"Workflow error: {e}")
             raise
+            raise handle_exception_gracefully(
+                e,
+                context='Workflow operation',
+                logger=self.logger
+            )
         finally:
             self._running = False
     
@@ -383,6 +391,11 @@ class AgentWorkflowOrchestrator:
             result.errors.append(str(e))
             result.should_continue = False
             logger.error(f"Phase {phase.value} failed: {e}")
+            raise handle_exception_gracefully(
+                e,
+                context='Workflow operation',
+                logger=self.logger
+            )
         
         return result
     
@@ -444,6 +457,11 @@ class AgentWorkflowOrchestrator:
                 except Exception as e:
                     logger.warning(f"Failed to create environment: {e}. Falling back to simulated.")
                     context.environment_type = "simulated"
+                    raise handle_exception_gracefully(
+                        e,
+                        context='Workflow operation',
+                        logger=self.logger
+                    )
         
         # 3. Determine required tools based on goals
         context.required_tools = self._determine_required_tools(context.mission_goals, scope)
@@ -532,6 +550,11 @@ class AgentWorkflowOrchestrator:
             logger.error(f"Campaign planning failed: {e}")
             # Continue with basic workflow
             context.campaign_id = str(uuid4())
+            raise handle_exception_gracefully(
+                e,
+                context='Workflow operation',
+                logger=self.logger
+            )
         
         # LLM Enhancement (if enabled)
         if context.llm_enabled:
@@ -544,6 +567,11 @@ class AgentWorkflowOrchestrator:
                     })
             except Exception as e:
                 logger.warning(f"LLM enhancement failed: {e}")
+                raise handle_exception_gracefully(
+                    e,
+                    context='Workflow operation',
+                    logger=self.logger
+                )
         
         result.status = PhaseStatus.COMPLETED
         return result
@@ -989,6 +1017,11 @@ class AgentWorkflowOrchestrator:
                 await self.blackboard.update_session_status(session_id, "closed")
             except Exception as e:
                 logger.warning(f"Failed to close session {session_id}: {e}")
+                raise handle_exception_gracefully(
+                    e,
+                    context='Workflow operation',
+                    logger=self.logger
+                )
         
         # Destroy execution environment if created
         if context.environment_id and context.environment_type != "simulated":
@@ -997,6 +1030,11 @@ class AgentWorkflowOrchestrator:
                 logger.info(f"Destroyed execution environment: {context.environment_id}")
             except Exception as e:
                 logger.warning(f"Failed to destroy environment: {e}")
+                raise handle_exception_gracefully(
+                    e,
+                    context='Workflow operation',
+                    logger=self.logger
+                )
         
         # Remove from active workflows
         if context.mission_id in self._active_workflows:
@@ -1042,6 +1080,11 @@ class AgentWorkflowOrchestrator:
         except Exception as e:
             logger.error(f"Failed to create environment: {e}")
             raise
+            raise handle_exception_gracefully(
+                e,
+                context='Workflow operation',
+                logger=self.logger
+            )
     
     async def _destroy_execution_environment(self, env_id: str) -> None:
         """Destroy execution environment."""
@@ -1055,6 +1098,11 @@ class AgentWorkflowOrchestrator:
             logger.warning("EnvironmentManager not available")
         except Exception as e:
             logger.error(f"Failed to destroy environment: {e}")
+            raise handle_exception_gracefully(
+                e,
+                context='Workflow operation',
+                logger=self.logger
+            )
     
     def _determine_required_tools(
         self,
@@ -1207,6 +1255,11 @@ Be concise and actionable.
             
         except Exception as e:
             logger.warning(f"LLM enhancement failed: {e}")
+            raise handle_exception_gracefully(
+                e,
+                context='Workflow operation',
+                logger=self.logger
+            )
         
         return None
     
@@ -1243,6 +1296,11 @@ Be concise and actionable.
         except Exception as e:
             logger.warning(f"Failed to get workflow status from blackboard: {e}", exc_info=True)
             return None
+            raise handle_exception_gracefully(
+                e,
+                context='Workflow operation',
+                logger=self.logger
+            )
     
     async def pause_workflow(self, mission_id: str) -> bool:
         """Pause a workflow."""
