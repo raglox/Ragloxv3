@@ -85,6 +85,41 @@ class MissionPlanner:
     
     async def generate_execution_plan(self, goals: List[str]) -> ExecutionPlan:
         """Generate execution plan for mission goals."""
+        # Create basic phases based on standard mission lifecycle
+        phases = []
+        
+        # Standard phases for any offensive mission
+        if any("recon" in g.lower() or "initial" in g.lower() or "access" in g.lower() for g in goals):
+            phases.append({
+                "name": "Reconnaissance",
+                "tasks": ["Network scanning", "Target enumeration", "Service discovery"],
+                "estimated_duration": 30,
+                "priority": 9
+            })
+        
+        if any("vuln" in g.lower() or "assess" in g.lower() or "access" in g.lower() for g in goals):
+            phases.append({
+                "name": "Initial Access",
+                "tasks": ["Vulnerability scanning", "Exploit identification", "Initial compromise"],
+                "estimated_duration": 45,
+                "priority": 8
+            })
+        
+        if any("escalate" in g.lower() or "privilege" in g.lower() or "persistence" in g.lower() for g in goals):
+            phases.append({
+                "name": "Privilege Escalation",
+                "tasks": ["Local enumeration", "Privilege escalation", "Persistence mechanisms"],
+                "estimated_duration": 40,
+                "priority": 7
+            })
+        
+        # Default: if no specific phases detected, create generic phases
+        if not phases:
+            phases = [
+                {"name": "Reconnaissance", "tasks": ["Information gathering"], "estimated_duration": 20, "priority": 8},
+                {"name": "Exploitation", "tasks": ["Execution"], "estimated_duration": 30, "priority": 8}
+            ]
+        
         plan = ExecutionPlan(
             plan_id=f"plan-{uuid4()}",
             mission_id=self.mission_id,
@@ -97,9 +132,10 @@ class MissionPlanner:
                 )
                 for goal in goals
             ],
+            phases=phases
         )
         
-        logger.info(f"Generated execution plan {plan.plan_id} with {len(goals)} goals")
+        logger.info(f"Generated execution plan {plan.plan_id} with {len(goals)} goals and {len(phases)} phases")
         return plan
     
     async def decompose_goals(self, goals: List[MissionGoal]) -> List[Dict[str, Any]]:

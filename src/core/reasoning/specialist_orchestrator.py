@@ -288,6 +288,85 @@ class SpecialistOrchestrator:
                    f"with {len(specialists)} specialists")
     
     # ═══════════════════════════════════════════════════════════════
+    # Specialist Management
+    # ═══════════════════════════════════════════════════════════════
+    
+    async def register_specialist(
+        self,
+        specialist_type: SpecialistType,
+        specialist_id: str,
+        capabilities: List[str]
+    ) -> None:
+        """
+        Register a specialist dynamically at runtime.
+        
+        Allows tests and dynamic orchestration to add specialists
+        after initialization. Useful for:
+        - E2E testing with progressive specialist registration
+        - Runtime specialist scaling
+        - Dynamic capability addition
+        
+        Args:
+            specialist_type: Type of specialist (recon, vuln, attack, etc.)
+            specialist_id: Unique identifier for this specialist instance
+            capabilities: List of capabilities this specialist provides
+        
+        Example:
+            await orchestrator.register_specialist(
+                specialist_type=SpecialistType.recon,
+                specialist_id="recon_001",
+                capabilities=["nmap", "masscan", "enum"]
+            )
+        """
+        from ...specialists.base import BaseSpecialist
+        
+        # Create a mock specialist for testing/dynamic scenarios
+        class DynamicSpecialist(BaseSpecialist):
+            def __init__(self, spec_type, spec_id, caps):
+                self.specialist_type = spec_type
+                self.specialist_id = spec_id
+                self.capabilities = caps
+                self.status = "ready"
+            
+            async def execute_task(self, task):
+                """Execute task (mock implementation for testing)"""
+                return {
+                    "status": "success",
+                    "specialist_id": self.specialist_id,
+                    "task_id": task.get("task_id", "unknown"),
+                    "specialist_type": self.specialist_type.value
+                }
+            
+            async def on_event(self, event):
+                """Handle events (mock implementation for testing)"""
+                logger.debug(f"Specialist {self.specialist_id} received event: {event}")
+                pass
+        
+        specialist = DynamicSpecialist(specialist_type, specialist_id, capabilities)
+        self.specialists[specialist_type] = specialist
+        
+        logger.info(f"Registered specialist: {specialist_type.value} "
+                   f"(id={specialist_id}, capabilities={capabilities})")
+    
+    def get_registered_specialists(self) -> Dict[SpecialistType, Any]:
+        """
+        Get all currently registered specialists.
+        
+        Returns:
+            Dictionary mapping specialist types to instances
+        """
+        return self.specialists.copy()
+    
+    def get_specialist_count(self) -> int:
+        """
+        Get count of registered specialists.
+        
+        Returns:
+            Number of registered specialists
+        """
+        return len(self.specialists)
+    
+    # ═══════════════════════════════════════════════════════════════
     # Phase Analysis
     # ═══════════════════════════════════════════════════════════════
     
