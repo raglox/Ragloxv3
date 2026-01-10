@@ -1,686 +1,407 @@
-# ═══════════════════════════════════════════════════════════════
-# RAGLOX v3.0 - Advanced Risk Assessment Engine
-# Phase 5.0: Advanced Features
-# ═══════════════════════════════════════════════════════════════
-
 """
-Advanced Risk Assessment Engine for RAGLOX v3.0
+RAGLOX v3.0 - Advanced Risk Assessment Engine
+Phase 5.0: Intelligent Risk Analysis
 
-Provides comprehensive risk analysis for missions, targets, and actions
-using multi-factor risk scoring, threat modeling, and defense detection.
-
-Key Features:
-- Multi-factor risk scoring
-- Defense capability assessment
-- Attack surface risk analysis
-- Action risk evaluation
-- Real-time risk updates
-
-Author: RAGLOX Team
-Version: 3.0.0
-Date: 2026-01-09
+Real-time risk assessment based on:
+- Target characteristics
+- Vulnerability severity
+- Detection probability
+- Mission constraints
+- Historical data
 """
 
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any
+from datetime import datetime
+import asyncio
 
-if TYPE_CHECKING:
-    from ..reasoning.mission_intelligence import MissionIntelligence, TargetIntel
-
-logger = logging.getLogger("raglox.core.risk_assessment")
-
-
-# ═══════════════════════════════════════════════════════════════
-# Enums
-# ═══════════════════════════════════════════════════════════════
 
 class RiskLevel(Enum):
-    """Risk level classifications."""
-    MINIMAL = "minimal"      # 0-2
-    LOW = "low"              # 2-4
-    MEDIUM = "medium"        # 4-6
-    HIGH = "high"            # 6-8
-    CRITICAL = "critical"    # 8-10
-    EXTREME = "extreme"      # 10+
+    """Risk level classification"""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    MINIMAL = "minimal"
 
-
-class DefenseLevel(Enum):
-    """Defense sophistication levels."""
-    NONE = "none"
-    BASIC = "basic"
-    MODERATE = "moderate"
-    ADVANCED = "advanced"
-    MILITARY_GRADE = "military_grade"
-
-
-class ThreatActor(Enum):
-    """Threat actor classifications."""
-    SCRIPT_KIDDIE = "script_kiddie"
-    HACKTIVIST = "hacktivist"
-    CYBERCRIMINAL = "cybercriminal"
-    APT = "apt"
-    NATION_STATE = "nation_state"
-
-
-# ═══════════════════════════════════════════════════════════════
-# Risk Models
-# ═══════════════════════════════════════════════════════════════
 
 @dataclass
 class RiskFactor:
-    """Individual risk factor."""
+    """Individual risk factor"""
     name: str
+    value: float  # 0.0-1.0
     weight: float  # 0.0-1.0
-    score: float   # 0.0-10.0
-    description: str = ""
-    mitigation: str = ""
-
-
-@dataclass
-class DefenseCapability:
-    """Defense capability assessment."""
-    defense_type: str  # EDR, IDS, WAF, etc.
-    sophistication: DefenseLevel
-    coverage: float  # 0.0-1.0 (percentage of attack surface covered)
-    evasion_difficulty: float  # 0.0-10.0
-    detection_probability: float  # 0.0-1.0
-    details: Dict[str, Any] = field(default_factory=dict)
+    description: str
+    category: str = "general"  # detection, operational, etc.
 
 
 @dataclass
 class RiskAssessment:
-    """Comprehensive risk assessment."""
-    assessment_id: str
-    target_id: Optional[str] = None
-    mission_id: Optional[str] = None
-    
-    # Overall risk
-    overall_risk_score: float = 0.0  # 0.0-10.0
-    risk_level: RiskLevel = RiskLevel.MEDIUM
-    
-    # Risk factors
+    """Complete risk assessment result"""
+    overall_risk: RiskLevel
+    risk_score: float  # 0.0-1.0
     factors: List[RiskFactor] = field(default_factory=list)
-    
-    # Defense assessment
-    detected_defenses: List[DefenseCapability] = field(default_factory=list)
-    defense_score: float = 0.0  # 0.0-10.0
-    
-    # Attack surface
-    attack_surface_score: float = 0.0  # 0.0-10.0
-    entry_points_count: int = 0
-    critical_vulnerabilities: int = 0
-    
-    # Operational risk
-    stealth_impact: float = 5.0  # 0.0-10.0 (higher = noisier)
-    time_risk: float = 5.0  # 0.0-10.0 (longer operations = higher risk)
-    
-    # Recommendations
-    risk_mitigation_steps: List[str] = field(default_factory=list)
-    proceed_recommended: bool = True
-    
-    # Metadata
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    expires_at: Optional[datetime] = None
+    recommendations: List[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=datetime.utcnow)
     confidence: float = 0.8  # 0.0-1.0
 
 
-@dataclass
-class ActionRiskProfile:
-    """Risk profile for a specific action."""
-    action_type: str  # exploit, scan, lateral_move, etc.
-    target_id: str
-    
-    # Pre-action risk
-    pre_action_risk: float = 5.0
-    
-    # Action-specific risks
-    detection_risk: float = 5.0  # Likelihood of detection
-    failure_risk: float = 5.0    # Likelihood of failure
-    collateral_risk: float = 5.0  # Risk of unintended consequences
-    attribution_risk: float = 5.0  # Risk of attribution
-    
-    # Combined risk
-    total_risk: float = 5.0
-    risk_level: RiskLevel = RiskLevel.MEDIUM
-    
-    # Recommendations
-    recommended: bool = True
-    alternative_actions: List[str] = field(default_factory=list)
-    risk_reduction_steps: List[str] = field(default_factory=list)
-
-
-# ═══════════════════════════════════════════════════════════════
-# Advanced Risk Assessment Engine
-# ═══════════════════════════════════════════════════════════════
-
 class AdvancedRiskAssessmentEngine:
     """
-    Advanced Risk Assessment Engine.
+    Advanced Risk Assessment Engine
     
-    Provides comprehensive risk analysis for missions, targets, and actions.
+    Evaluates mission risk in real-time based on multiple factors:
+    - Target security posture
+    - Detection probability
+    - Mission constraints
+    - Attack surface analysis
     
     Usage:
-        engine = AdvancedRiskAssessmentEngine(
-            mission_intelligence=intel
-        )
-        
-        # Assess target risk
-        risk = await engine.assess_target_risk(target_id="target-123")
-        print(f"Risk: {risk.risk_level.value}, Score: {risk.overall_risk_score}")
-        
-        # Assess action risk
-        action_risk = await engine.assess_action_risk(
-            action_type="exploit",
-            target_id="target-123"
-        )
-        print(f"Action risk: {action_risk.total_risk}")
+        engine = AdvancedRiskAssessmentEngine(mission_id, blackboard)
+        assessment = await engine.assess_current_risk()
+        print(f"Risk Level: {assessment.overall_risk}")
     """
     
-    def __init__(
-        self,
-        mission_intelligence: Optional["MissionIntelligence"] = None,
-        threat_actor_profile: ThreatActor = ThreatActor.CYBERCRIMINAL,
-    ):
-        """
-        Initialize Risk Assessment Engine.
-        
-        Args:
-            mission_intelligence: MissionIntelligence instance
-            threat_actor_profile: Threat actor profile for context
-        """
-        self.mission_intelligence = mission_intelligence
-        self.threat_actor_profile = threat_actor_profile
-        
-        # Risk calculation weights
-        self._weights = {
-            "defense_sophistication": 0.25,
-            "attack_surface": 0.20,
-            "vulnerability_severity": 0.20,
-            "operational_time": 0.15,
-            "stealth_requirements": 0.10,
-            "target_value": 0.10,
-        }
-        
-        logger.info(f"Initialized AdvancedRiskAssessmentEngine with profile: {threat_actor_profile.value}")
+    def __init__(self, mission_id: str, blackboard: "Blackboard"):
+        self.mission_id = mission_id
+        self.blackboard = blackboard
+        self._risk_history: List[RiskAssessment] = []
     
-    # ═══════════════════════════════════════════════════════════════
-    # Target Risk Assessment
-    # ═══════════════════════════════════════════════════════════════
-    
-    async def assess_target_risk(
-        self,
-        target_id: str,
-        include_defenses: bool = True
-    ) -> RiskAssessment:
+    async def _calculate_detection_risk(self) -> float:
         """
-        Assess risk for a specific target.
+        Calculate detection risk based on recent mission actions.
         
-        Args:
-            target_id: Target ID
-            include_defenses: Include defense capability assessment
-            
         Returns:
-            RiskAssessment
+            Detection risk score (0.0-1.0)
         """
-        logger.debug(f"Assessing risk for target {target_id}")
+        base_risk = 0.3  # Baseline detection risk
         
-        assessment = RiskAssessment(
-            assessment_id=f"risk-{target_id}",
-            target_id=target_id,
-            mission_id=self.mission_intelligence.mission_id if self.mission_intelligence else None,
-        )
+        # Get recent events from blackboard stream
+        try:
+            # Read last 50 events from mission events stream
+            events_key = f"mission:{self.mission_id}:events"
+            events = await self.blackboard.redis.xrevrange(
+                events_key,
+                count=50
+            )
+            
+            action_count = 0
+            noisy_actions = 0
+            detection_alerts = 0
+            
+            for event_id, event_data in events:
+                # event_data is dict with string keys (not bytes)
+                event_type = event_data.get("type", "")
+                
+                if event_type == "action_taken":
+                    action_count += 1
+                    # Parse event data
+                    import json
+                    data_str = event_data.get("data", "{}")
+                    data = json.loads(data_str)
+                    
+                    # Check if action was noisy (low stealth)
+                    stealth = data.get("stealth", "medium")
+                    if stealth == "low":
+                        noisy_actions += 1
+                
+                elif event_type == "detection_alert":
+                    # Detection alerts significantly increase risk
+                    detection_alerts += 1
+                    import json
+                    data_str = event_data.get("data", "{}")
+                    data = json.loads(data_str)
+                    
+                    # Higher severity = more risk
+                    severity = data.get("severity", "low")
+                    if severity in ["high", "critical"]:
+                        detection_alerts += 1  # Count critical alerts twice
+            
+            # Increase risk based on activity
+            activity_risk = min(action_count * 0.1, 0.5)
+            noise_risk = min(noisy_actions * 0.3, 0.5)
+            detection_risk = min(detection_alerts * 0.4, 0.6)  # Detection alerts = major risk increase
+            
+            total_risk = min(base_risk + activity_risk + noise_risk + detection_risk, 1.0)
+            
+            return total_risk
+            
+        except Exception as e:
+            # Fallback if events not available
+            return base_risk
+    
+    async def assess_current_risk(self) -> RiskAssessment:
+        """
+        Perform comprehensive risk assessment for current mission state.
         
-        if not self.mission_intelligence:
-            logger.warning("No mission intelligence available, using default risk")
-            assessment.overall_risk_score = 5.0
-            assessment.risk_level = RiskLevel.MEDIUM
-            return assessment
-        
-        # Get target intelligence
-        target = self.mission_intelligence.get_target(target_id)
-        if not target:
-            logger.warning(f"Target {target_id} not found in intelligence")
-            assessment.overall_risk_score = 5.0
-            assessment.risk_level = RiskLevel.MEDIUM
-            return assessment
+        Returns:
+            RiskAssessment object with overall risk and factors
+        """
+        # Get current mission data
+        targets = await self.blackboard.get_mission_targets(self.mission_id)
+        # vulns = await self.blackboard.get_mission_vulns(self.mission_id)
         
         # Calculate risk factors
         factors = []
         
-        # 1. Defense sophistication
-        defense_factor = await self._assess_defense_factor(target)
-        factors.append(defense_factor)
+        # Factor 1: Target count (more targets = higher risk)
+        target_count_risk = min(len(targets) / 10.0, 1.0)
+        factors.append(RiskFactor(
+            name="target_exposure",
+            value=target_count_risk,
+            weight=0.3,
+            description=f"{len(targets)} targets in scope"
+        ))
         
-        # 2. Vulnerability landscape
-        vuln_factor = await self._assess_vulnerability_factor(target)
-        factors.append(vuln_factor)
+        # Factor 2: Detection probability (check recent actions)
+        detection_risk = await self._calculate_detection_risk()
+        factors.append(RiskFactor(
+            name="detection_probability",
+            value=detection_risk,
+            weight=0.4,
+            description="Estimated detection risk",
+            category="detection"
+        ))
         
-        # 3. Attack surface
-        surface_factor = await self._assess_attack_surface_factor(target)
-        factors.append(surface_factor)
+        # Factor 3: Mission complexity
+        complexity_risk = 0.6
+        factors.append(RiskFactor(
+            name="mission_complexity",
+            value=complexity_risk,
+            weight=0.3,
+            description="Overall mission complexity"
+        ))
         
-        # 4. Target hardening
-        hardening_factor = await self._assess_hardening_factor(target)
-        factors.append(hardening_factor)
+        # Calculate weighted risk score
+        risk_score = sum(f.value * f.weight for f in factors)
         
-        # 5. Network exposure
-        exposure_factor = await self._assess_exposure_factor(target)
-        factors.append(exposure_factor)
+        # Determine risk level
+        if risk_score >= 0.8:
+            level = RiskLevel.CRITICAL
+        elif risk_score >= 0.6:
+            level = RiskLevel.HIGH
+        elif risk_score >= 0.4:
+            level = RiskLevel.MEDIUM
+        elif risk_score >= 0.2:
+            level = RiskLevel.LOW
+        else:
+            level = RiskLevel.MINIMAL
         
-        assessment.factors = factors
+        # Generate recommendations
+        recommendations = []
+        if risk_score >= 0.6:
+            recommendations.append("Consider reducing attack surface")
+            recommendations.append("Implement additional stealth measures")
+        if len(targets) > 5:
+            recommendations.append("Prioritize high-value targets")
         
-        # Calculate weighted overall risk
-        total_weighted_risk = sum(
-            f.weight * f.score for f in factors
+        assessment = RiskAssessment(
+            overall_risk=level,
+            risk_score=risk_score,
+            factors=factors,
+            recommendations=recommendations
         )
         
-        assessment.overall_risk_score = min(total_weighted_risk, 10.0)
-        assessment.risk_level = self._score_to_risk_level(assessment.overall_risk_score)
-        
-        # Defense assessment
-        if include_defenses:
-            assessment.detected_defenses = await self._assess_defenses(target)
-            assessment.defense_score = self._calculate_defense_score(assessment.detected_defenses)
-        
-        # Get vulnerabilities for this target
-        target_vulns = self.mission_intelligence.get_vulnerabilities_by_target(target_id)
-        assessment.critical_vulnerabilities = len([v for v in target_vulns if v.severity == "critical"])
-        
-        # Attack surface
-        if self.mission_intelligence.attack_surface:
-            entry_points = [ep for ep in self.mission_intelligence.attack_surface.entry_points 
-                          if ep.get("target_id") == target_id]
-            assessment.entry_points_count = len(entry_points)
-        
-        # Generate risk mitigation recommendations
-        assessment.risk_mitigation_steps = self._generate_mitigation_steps(assessment)
-        
-        # Recommend proceed or not
-        assessment.proceed_recommended = assessment.overall_risk_score < 8.0
-        
-        logger.info(f"Target {target_id} risk assessment: {assessment.risk_level.value} "
-                   f"(score: {assessment.overall_risk_score:.2f})")
-        
+        self._risk_history.append(assessment)
         return assessment
     
-    async def _assess_defense_factor(self, target: "TargetIntel") -> RiskFactor:
-        """Assess defense sophistication factor."""
-        # Check for security products
-        security_products = [p.lower() for p in target.security_products]
+    async def assess_mission_risk(self) -> Dict[str, Any]:
+        """
+        Perform mission risk assessment (dict format for test compatibility).
         
-        score = 3.0  # Base score
+        Returns:
+            Dictionary with risk assessment details
+        """
+        assessment = await self.assess_current_risk()
         
-        # Increase risk based on detected defenses
-        if any("edr" in p or "endpoint" in p for p in security_products):
-            score += 3.0
-        if any("av" in p or "antivirus" in p for p in security_products):
-            score += 1.0
-        if any("firewall" in p for p in security_products):
-            score += 1.0
-        if any("ids" in p or "ips" in p for p in security_products):
-            score += 2.0
-        
-        # Hardening level
-        if target.hardening_level == "high":
-            score += 2.0
-        elif target.hardening_level == "medium":
-            score += 1.0
-        
-        return RiskFactor(
-            name="defense_sophistication",
-            weight=self._weights["defense_sophistication"],
-            score=min(score, 10.0),
-            description=f"Defense products detected: {len(security_products)}",
-            mitigation="Use stealthy techniques, avoid signature-based detection",
-        )
+        return {
+            "overall_risk": assessment.overall_risk.value,
+            "risk_score": round(assessment.risk_score * 100, 1),  # Convert to 0-100
+            "risk_factors": [
+                {
+                    "name": f.name,
+                    "value": f.value,
+                    "weight": f.weight,
+                    "description": f.description,
+                    "category": f.category
+                }
+                for f in assessment.factors
+            ],
+            "recommendations": assessment.recommendations,
+            "timestamp": assessment.timestamp.isoformat()
+        }
     
-    async def _assess_vulnerability_factor(self, target: "TargetIntel") -> RiskFactor:
-        """Assess vulnerability landscape factor."""
-        # Get vulnerabilities for this target
-        target_vulns = self.mission_intelligence.get_vulnerabilities_by_target(target.target_id)
+    async def monitor_risk_changes(self, interval_seconds: int = 30) -> None:
+        """
+        Continuously monitor risk changes.
         
-        if not target_vulns:
-            return RiskFactor(
-                name="vulnerability_severity",
-                weight=self._weights["vulnerability_severity"],
-                score=8.0,  # High risk - no known vulns
-                description="No known vulnerabilities",
-                mitigation="Perform thorough vulnerability assessment",
-            )
-        
-        # Calculate average severity
-        severity_scores = {"critical": 10, "high": 7, "medium": 5, "low": 3, "info": 1}
-        avg_severity = sum(severity_scores.get(v.severity, 5) for v in target_vulns) / len(target_vulns)
-        
-        # Exploitable vulnerabilities reduce risk (for attacker)
-        exploitable_count = len([v for v in target_vulns if v.is_exploitable])
-        exploitable_factor = max(0, 10 - exploitable_count * 2)  # More exploitable = lower risk
-        
-        score = (avg_severity + exploitable_factor) / 2
-        
-        return RiskFactor(
-            name="vulnerability_severity",
-            weight=self._weights["vulnerability_severity"],
-            score=score,
-            description=f"{len(target_vulns)} vulnerabilities, {exploitable_count} exploitable",
-            mitigation="Prioritize low-complexity exploits",
-        )
-    
-    async def _assess_attack_surface_factor(self, target: "TargetIntel") -> RiskFactor:
-        """Assess attack surface factor."""
-        # More open ports = larger attack surface = lower risk (for attacker)
-        open_ports_count = len(target.open_ports)
-        
-        # Inverse relationship: more ports = lower risk for attacker
-        score = max(2.0, 10.0 - (open_ports_count * 0.5))
-        
-        return RiskFactor(
-            name="attack_surface",
-            weight=self._weights["attack_surface"],
-            score=score,
-            description=f"{open_ports_count} open ports, {len(target.services)} services",
-            mitigation="Target exposed services, avoid noisy scans",
-        )
-    
-    async def _assess_hardening_factor(self, target: "TargetIntel") -> RiskFactor:
-        """Assess target hardening factor."""
-        hardening_scores = {"low": 3, "medium": 6, "high": 9, "unknown": 5}
-        score = hardening_scores.get(target.hardening_level, 5)
-        
-        return RiskFactor(
-            name="target_hardening",
-            weight=0.15,
-            score=score,
-            description=f"Hardening level: {target.hardening_level}",
-            mitigation="Use advanced exploitation techniques",
-        )
-    
-    async def _assess_exposure_factor(self, target: "TargetIntel") -> RiskFactor:
-        """Assess network exposure factor."""
-        # Check if target is in DMZ or internal network
-        is_dmz = target.subnet and ("dmz" in target.subnet.lower() or 
-                                     target.subnet.startswith("10.") or
-                                     target.subnet.startswith("172.") or
-                                     target.subnet.startswith("192.168."))
-        
-        score = 4.0 if is_dmz else 6.0  # Internal = higher risk of detection
-        
-        return RiskFactor(
-            name="network_exposure",
-            weight=0.10,
-            score=score,
-            description="Network location: " + ("Internal" if is_dmz else "DMZ/External"),
-            mitigation="Establish C2 quickly, minimize dwell time",
-        )
-    
-    async def _assess_defenses(self, target: "TargetIntel") -> List[DefenseCapability]:
-        """Assess defense capabilities."""
-        defenses = []
-        
-        for product in target.security_products:
-            product_lower = product.lower()
+        Args:
+            interval_seconds: Check interval in seconds
+        """
+        while True:
+            assessment = await self.assess_current_risk()
             
-            if "edr" in product_lower or "endpoint" in product_lower:
-                defenses.append(DefenseCapability(
-                    defense_type="EDR",
-                    sophistication=DefenseLevel.ADVANCED,
-                    coverage=0.9,
-                    evasion_difficulty=8.0,
-                    detection_probability=0.7,
-                    details={"product": product},
-                ))
-            elif "av" in product_lower or "antivirus" in product_lower:
-                defenses.append(DefenseCapability(
-                    defense_type="Antivirus",
-                    sophistication=DefenseLevel.MODERATE,
-                    coverage=0.7,
-                    evasion_difficulty=5.0,
-                    detection_probability=0.4,
-                    details={"product": product},
-                ))
-            elif "firewall" in product_lower:
-                defenses.append(DefenseCapability(
-                    defense_type="Firewall",
-                    sophistication=DefenseLevel.BASIC,
-                    coverage=0.5,
-                    evasion_difficulty=4.0,
-                    detection_probability=0.3,
-                    details={"product": product},
-                ))
-        
-        return defenses
+            # Check for significant risk increases
+            if len(self._risk_history) > 1:
+                prev = self._risk_history[-2]
+                if assessment.risk_score > prev.risk_score + 0.2:
+                    # Risk increased significantly
+                    await self.blackboard.add_event(
+                        mission_id=self.mission_id,
+                        event_type="risk_alert",
+                        data={
+                            "previous_score": prev.risk_score,
+                            "current_score": assessment.risk_score,
+                            "level": assessment.overall_risk.value
+                        }
+                    )
+            
+            await asyncio.sleep(interval_seconds)
     
-    def _calculate_defense_score(self, defenses: List[DefenseCapability]) -> float:
-        """Calculate overall defense score."""
-        if not defenses:
-            return 2.0  # Low defense
-        
-        # Average evasion difficulty
-        avg_difficulty = sum(d.evasion_difficulty for d in defenses) / len(defenses)
-        return min(avg_difficulty, 10.0)
-    
-    # ═══════════════════════════════════════════════════════════════
-    # Action Risk Assessment
-    # ═══════════════════════════════════════════════════════════════
+    async def get_risk_history(self) -> List[RiskAssessment]:
+        """Get historical risk assessments"""
+        return self._risk_history.copy()
     
     async def assess_action_risk(
         self,
         action_type: str,
         target_id: str,
-        parameters: Optional[Dict[str, Any]] = None
-    ) -> ActionRiskProfile:
+        **kwargs
+    ) -> Dict[str, Any]:
         """
         Assess risk for a specific action.
         
         Args:
-            action_type: Type of action (exploit, scan, etc.)
-            target_id: Target ID
-            parameters: Action parameters
+            action_type: Type of action (port_scan, exploit, lateral_movement, etc.)
+            target_id: Target system ID
+            **kwargs: Additional action parameters
             
         Returns:
-            ActionRiskProfile
+            Dictionary with action risk assessment
         """
-        logger.debug(f"Assessing risk for action {action_type} on target {target_id}")
+        # Risk scores for different action types (0-100 scale)
+        base_risk_scores = {
+            "passive_dns_query": 10,  # Very low risk, passive recon
+            "port_scan": 30,          # Low risk, passive
+            "service_enum": 35,       # Low-medium risk
+            "vulnerability_scan": 45, # Medium risk
+            "exploit": 75,            # High risk, active
+            "exploit_execution": 85,  # Very high risk, active exploitation
+            "lateral_movement": 85,   # Very high risk
+            "privilege_escalation": 80,  # High risk
+            "data_exfiltration": 90,  # Very high risk
+            "persistence": 70,        # High risk
+            "cleanup": 20             # Low risk
+        }
         
-        # Get target risk first
-        target_risk = await self.assess_target_risk(target_id)
+        # Get base risk for action type
+        base_score = base_risk_scores.get(action_type.lower(), 50)
         
-        profile = ActionRiskProfile(
-            action_type=action_type,
-            target_id=target_id,
-            pre_action_risk=target_risk.overall_risk_score,
-        )
+        # Adjust based on current mission risk
+        mission_risk = await self.assess_current_risk()
+        risk_multiplier = 1.0 + (mission_risk.risk_score * 0.5)  # Up to 1.5x multiplier
         
-        # Action-specific risk calculation
-        if action_type in ["exploit", "attack"]:
-            profile.detection_risk = min(target_risk.defense_score + 2.0, 10.0)
-            profile.failure_risk = 6.0 - (2.0 if target_risk.critical_vulnerabilities > 0 else 0)
-            profile.collateral_risk = 5.0
-            profile.attribution_risk = 4.0
+        # Adjust based on target characteristics (if available)
+        target_data = await self.blackboard.get_target(target_id)
+        if target_data:
+            # Higher value targets = higher risk
+            target_value = target_data.get("params", {}).get("target_value", 50)
+            if target_value > 80:
+                risk_multiplier *= 1.2
         
-        elif action_type in ["scan", "port_scan", "vuln_scan"]:
-            profile.detection_risk = 4.0  # Scans are noisy
-            profile.failure_risk = 2.0  # Low failure risk
-            profile.collateral_risk = 2.0
-            profile.attribution_risk = 6.0  # Easy to attribute
+        # Calculate final risk score
+        final_score = min(base_score * risk_multiplier, 100)
         
-        elif action_type in ["lateral_move", "lateral"]:
-            profile.detection_risk = min(target_risk.defense_score + 1.0, 10.0)
-            profile.failure_risk = 5.0
-            profile.collateral_risk = 6.0  # Can affect other systems
-            profile.attribution_risk = 5.0
-        
-        elif action_type in ["privilege_escalation", "privesc"]:
-            profile.detection_risk = min(target_risk.defense_score + 3.0, 10.0)
-            profile.failure_risk = 7.0  # High failure risk
-            profile.collateral_risk = 4.0
-            profile.attribution_risk = 3.0
-        
+        # Determine risk level
+        if final_score >= 80:
+            risk_level = "critical"
+        elif final_score >= 60:
+            risk_level = "high"
+        elif final_score >= 40:
+            risk_level = "medium"
         else:
-            # Generic action
-            profile.detection_risk = 5.0
-            profile.failure_risk = 5.0
-            profile.collateral_risk = 5.0
-            profile.attribution_risk = 5.0
-        
-        # Calculate total risk
-        profile.total_risk = (
-            profile.pre_action_risk * 0.3 +
-            profile.detection_risk * 0.3 +
-            profile.failure_risk * 0.2 +
-            profile.collateral_risk * 0.1 +
-            profile.attribution_risk * 0.1
-        )
-        
-        profile.risk_level = self._score_to_risk_level(profile.total_risk)
-        profile.recommended = profile.total_risk < 7.5
-        
-        # Generate recommendations
-        if profile.detection_risk > 6.0:
-            profile.risk_reduction_steps.append("Use stealthy techniques")
-            profile.risk_reduction_steps.append("Disable EDR/AV if possible")
-        
-        if profile.failure_risk > 6.0:
-            profile.risk_reduction_steps.append("Verify prerequisites")
-            profile.risk_reduction_steps.append("Test exploit in lab first")
-        
-        if not profile.recommended:
-            profile.alternative_actions.append(f"Consider different approach to {target_id}")
-            profile.alternative_actions.append("Wait for better opportunity")
-        
-        logger.info(f"Action {action_type} risk: {profile.risk_level.value} "
-                   f"(total: {profile.total_risk:.2f})")
-        
-        return profile
-    
-    # ═══════════════════════════════════════════════════════════════
-    # Mission-Level Risk Assessment
-    # ═══════════════════════════════════════════════════════════════
-    
-    async def assess_mission_risk(self) -> RiskAssessment:
-        """
-        Assess overall mission risk.
-        
-        Returns:
-            RiskAssessment for entire mission
-        """
-        logger.debug("Assessing overall mission risk")
-        
-        if not self.mission_intelligence:
-            return RiskAssessment(
-                assessment_id="mission-risk",
-                overall_risk_score=5.0,
-                risk_level=RiskLevel.MEDIUM,
-            )
-        
-        assessment = RiskAssessment(
-            assessment_id="mission-risk",
-            mission_id=self.mission_intelligence.mission_id,
-        )
-        
-        # Assess all targets
-        targets = self.mission_intelligence.get_all_targets()
-        target_risks = []
-        
-        for target in targets[:10]:  # Limit to 10 for performance
-            target_risk = await self.assess_target_risk(target.target_id, include_defenses=False)
-            target_risks.append(target_risk.overall_risk_score)
-        
-        # Calculate mission risk as weighted average
-        if target_risks:
-            # Higher weight for compromised targets
-            compromised_count = self.mission_intelligence.compromised_targets
-            total_count = self.mission_intelligence.total_targets
-            
-            compromise_factor = compromised_count / max(total_count, 1)
-            avg_target_risk = sum(target_risks) / len(target_risks)
-            
-            # Compromised targets increase overall risk (detection risk)
-            assessment.overall_risk_score = avg_target_risk * (1 + compromise_factor * 0.3)
-        else:
-            assessment.overall_risk_score = 5.0
-        
-        assessment.risk_level = self._score_to_risk_level(assessment.overall_risk_score)
-        
-        # Mission-specific factors
-        assessment.factors = [
-            RiskFactor(
-                name="mission_scope",
-                weight=0.2,
-                score=min(len(targets) * 0.5, 10.0),
-                description=f"{len(targets)} targets in scope",
-            ),
-            RiskFactor(
-                name="compromise_rate",
-                weight=0.3,
-                score=compromised_count / max(total_count, 1) * 10,
-                description=f"{compromised_count}/{total_count} targets compromised",
-            ),
-        ]
-        
-        # Recommendations
-        if assessment.overall_risk_score > 7.0:
-            assessment.risk_mitigation_steps.append("Pause and reassess strategy")
-            assessment.risk_mitigation_steps.append("Increase stealth measures")
-            assessment.proceed_recommended = False
-        else:
-            assessment.risk_mitigation_steps.append("Continue with caution")
-            assessment.proceed_recommended = True
-        
-        logger.info(f"Mission risk assessment: {assessment.risk_level.value} "
-                   f"(score: {assessment.overall_risk_score:.2f})")
-        
-        return assessment
-    
-    # ═══════════════════════════════════════════════════════════════
-    # Utility Methods
-    # ═══════════════════════════════════════════════════════════════
-    
-    def _score_to_risk_level(self, score: float) -> RiskLevel:
-        """Convert risk score to risk level."""
-        if score < 2.0:
-            return RiskLevel.MINIMAL
-        elif score < 4.0:
-            return RiskLevel.LOW
-        elif score < 6.0:
-            return RiskLevel.MEDIUM
-        elif score < 8.0:
-            return RiskLevel.HIGH
-        elif score < 10.0:
-            return RiskLevel.CRITICAL
-        else:
-            return RiskLevel.EXTREME
-    
-    def _generate_mitigation_steps(self, assessment: RiskAssessment) -> List[str]:
-        """Generate risk mitigation recommendations."""
-        steps = []
-        
-        if assessment.defense_score > 7.0:
-            steps.append("Implement advanced evasion techniques")
-            steps.append("Use obfuscation and anti-forensics")
-        
-        if assessment.critical_vulnerabilities == 0:
-            steps.append("Conduct thorough vulnerability assessment")
-            steps.append("Consider zero-day exploits")
-        
-        if assessment.overall_risk_score > 8.0:
-            steps.append("Consider aborting mission - risk too high")
-            steps.append("Reassess mission objectives")
-        
-        return steps
-    
-    async def get_risk_summary(self) -> Dict[str, Any]:
-        """Get overall risk summary."""
-        mission_risk = await self.assess_mission_risk()
+            risk_level = "low"
         
         return {
-            "mission_risk_level": mission_risk.risk_level.value,
-            "mission_risk_score": mission_risk.overall_risk_score,
-            "total_targets": self.mission_intelligence.total_targets if self.mission_intelligence else 0,
-            "compromised_targets": self.mission_intelligence.compromised_targets if self.mission_intelligence else 0,
-            "proceed_recommended": mission_risk.proceed_recommended,
-            "mitigation_steps": mission_risk.risk_mitigation_steps,
+            "action_type": action_type,
+            "target_id": target_id,
+            "risk_score": round(final_score, 1),
+            "risk_level": risk_level,
+            "base_score": base_score,
+            "risk_multiplier": round(risk_multiplier, 2),
+            "mission_risk": mission_risk.overall_risk.value,
+            "recommended": final_score < 70  # Recommend if below threshold
         }
+    
+    async def should_proceed_with_action(
+        self, 
+        action_type: str, 
+        risk_threshold: float = 0.7
+    ) -> bool:
+        """
+        Determine if action should proceed based on current risk.
+        
+        Args:
+            action_type: Type of action (exploit, scan, etc.)
+            risk_threshold: Maximum acceptable risk (0.0-1.0)
+            
+        Returns:
+            True if action should proceed, False if too risky
+        """
+        assessment = await self.assess_current_risk()
+        
+        # Check if current risk exceeds threshold
+        if assessment.risk_score > risk_threshold:
+            return False
+        
+        # Action-specific checks
+        if action_type == "exploit" and assessment.risk_score > 0.5:
+            return False
+        
+        return True
+    
+    async def get_risk_mitigation_recommendations(self) -> List[str]:
+        """
+        Get recommendations to mitigate current mission risks.
+        
+        Returns:
+            List of mitigation recommendation strings
+        """
+        assessment = await self.assess_current_risk()
+        recommendations = []
+        
+        # Check detection risk
+        detection_factors = [f for f in assessment.factors if f.category == "detection"]
+        if detection_factors and detection_factors[0].value > 0.6:
+            recommendations.extend([
+                "Increase stealth level for all operations",
+                "Reduce scan speeds to avoid detection",
+                "Use encrypted communication channels",
+                "Implement anti-forensics measures"
+            ])
+        
+        # Check operational risk
+        if assessment.risk_score > 0.7:
+            recommendations.extend([
+                "Review mission scope and reduce attack surface",
+                "Consolidate operations to fewer targets",
+                "Implement additional operational security measures"
+            ])
+        
+        # Check target exposure
+        target_factors = [f for f in assessment.factors if "target" in f.name.lower()]
+        if target_factors and target_factors[0].value > 0.7:
+            recommendations.extend([
+                "Prioritize high-value targets to reduce exposure time",
+                "Implement target grouping strategies"
+            ])
+        
+        # General recommendations if risk is elevated
+        if assessment.risk_score > 0.5:
+            recommendations.extend([
+                "Consider pausing operations during high-risk periods",
+                "Enhance monitoring and alerting mechanisms"
+            ])
+        
+        return recommendations if recommendations else ["Current risk level acceptable - continue operations"]

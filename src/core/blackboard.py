@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Type, TypeVar
+from typing import Any, Dict, List, Optional, Set, Type, TypeVar, Union
 from uuid import UUID
 import json
 import asyncio
@@ -296,6 +296,151 @@ class Blackboard:
         )
     
     # ═══════════════════════════════════════════════════════════
+    # Metadata Operations
+    # ═══════════════════════════════════════════════════════════
+    
+    async def store_metadata(
+        self,
+        mission_id: str,
+        key: str,
+        value: Union[Dict[str, Any], str, int, float, bool]
+    ) -> None:
+        """
+        Store mission metadata in Redis.
+        
+        Args:
+            mission_id: Mission identifier
+            key: Metadata key (e.g., 'intelligence', 'config', 'state')
+            value: Metadata value (dict, string, number, or boolean)
+            
+        Usage:
+            # Store intelligence data
+            await blackboard.store_metadata(
+                mission_id="mission-123",
+                key="intelligence",
+                value=intel.to_dict()
+            )
+            
+            # Store simple config
+            await blackboard.store_metadata(
+                mission_id="mission-123",
+                key="stealth_mode",
+                value=True
+            )
+        """
+        # Serialize value if it's a dict or complex type
+        if isinstance(value, dict):
+            serialized = json.dumps(value)
+        elif isinstance(value, (list, tuple)):
+            serialized = json.dumps(value)
+        else:
+            serialized = str(value)
+        
+        await self.redis.hset(
+            f"mission:{mission_id}:metadata",
+            key,
+            serialized
+        )
+    
+    async def get_metadata(
+        self,
+        mission_id: str,
+        key: str,
+        default: Optional[Any] = None
+    ) -> Optional[Any]:
+        """
+        Retrieve mission metadata from Redis.
+        
+        Args:
+            mission_id: Mission identifier
+            key: Metadata key
+            default: Default value if key not found
+            
+        Returns:
+            Metadata value (parsed from JSON if applicable) or default
+            
+        Usage:
+            # Get intelligence data
+            intel_dict = await blackboard.get_metadata(
+                mission_id="mission-123",
+                key="intelligence"
+            )
+            
+            # Get with default
+            stealth = await blackboard.get_metadata(
+                mission_id="mission-123",
+                key="stealth_mode",
+                default=False
+            )
+        """
+        data = await self.redis.hget(
+            f"mission:{mission_id}:metadata",
+            key
+        )
+        
+        if data is None:
+            return default
+        
+        # Try to parse as JSON
+        try:
+            return json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            # Return as string if not JSON
+            return data
+    
+    async def get_all_metadata(
+        self,
+        mission_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get all metadata for a mission.
+        
+        Args:
+            mission_id: Mission identifier
+            
+        Returns:
+            Dictionary of all metadata key-value pairs
+            
+        Usage:
+            all_meta = await blackboard.get_all_metadata("mission-123")
+        """
+        data = await self.redis.hgetall(f"mission:{mission_id}:metadata")
+        
+        if not data:
+            return {}
+        
+        # Parse JSON values where possible
+        result = {}
+        for key, value in data.items():
+            try:
+                result[key] = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                result[key] = value
+        
+        return result
+    
+    async def delete_metadata(
+        self,
+        mission_id: str,
+        key: str
+    ) -> bool:
+        """
+        Delete a specific metadata key.
+        
+        Args:
+            mission_id: Mission identifier
+            key: Metadata key to delete
+            
+        Returns:
+            True if key was deleted, False if it didn't exist
+        """
+        result = await self.redis.hdel(
+            f"mission:{mission_id}:metadata",
+            key
+        )
+        return result > 0
+    
+    # ═══════════════════════════════════════════════════════════
     # Target Operations
     # ═══════════════════════════════════════════════════════════
     
@@ -314,6 +459,71 @@ class Blackboard:
         await self.redis.hincrby(f"mission:{mission_id}:stats", "targets_discovered", 1)
         
         return target_id
+    
+    async def create_target(
+        self,
+        mission_id: str,
+        target_id: str,
+        ip: str,
+        hostname: Optional[str] = None,
+        os: Optional[str] = None,
+        status: str = "discovered",
+        ports: Optional[List[int]] = None,
+        services: Optional[List[str]] = None,
+        **kwargs
+    ) -> str:
+        """
+        Create and add a target using named parameters (convenience method).
+        
+        This is a helper method for tests and dynamic target creation
+        that don't have a full Target object ready.
+        
+        Args:
+            mission_id: Mission ID
+            target_id: Target identifier
+            ip: IP address
+            hostname: Optional hostname
+            os: Optional OS information
+            status: Target status (default: "discovered")
+            ports: Optional list of ports
+            services: Optional list of services
+            **kwargs: Additional target fields
+            
+        Returns:
+            Target ID
+            
+        Example:
+            target_id = await bb.create_target(
+                mission_id="mission_123",
+                target_id="target_1",
+                ip="192.168.1.10",
+                hostname="web-server",
+                status="scanned",
+                ports=[22, 80, 443]
+            )
+        """
+        from uuid import UUID
+        from .models import Target, TargetStatus
+        
+        # Convert status string to enum if needed
+        if isinstance(status, str):
+            status_enum = TargetStatus[status.upper()] if hasattr(TargetStatus, status.upper()) else TargetStatus.DISCOVERED
+        else:
+            status_enum = status
+        
+        # Create Target object
+        target = Target(
+            id=UUID(target_id) if len(target_id) == 36 else UUID(int=hash(target_id) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF),
+            mission_id=UUID(mission_id) if len(mission_id) == 36 else UUID(int=hash(mission_id) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF),
+            ip=ip,
+            hostname=hostname,
+            os=os,
+            status=status_enum,
+            ports={port: "" for port in (ports or [])},
+            **kwargs
+        )
+        
+        return await self.add_target(target)
     
     async def get_target(self, target_id: str) -> Optional[Dict[str, Any]]:
         """Get target by ID."""
@@ -490,9 +700,152 @@ class Blackboard:
         
         return task_id
     
+    async def create_task(
+        self,
+        mission_id: str,
+        task_type: str,
+        assigned_to: str,
+        priority: Union[int, str] = 5,
+        params: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> str:
+        """
+        Create and add a task using named parameters (convenience method).
+        
+        Helper method for tests and dynamic task creation.
+        
+        Args:
+            mission_id: Mission ID
+            task_type: Type of task (from TaskType enum or string)
+            assigned_to: Specialist type assigned to this task (string or SpecialistType)
+            priority: Task priority (1-10 int, or string like "high")
+            params: Task parameters
+            **kwargs: Additional task fields
+            
+        Returns:
+            Task ID
+            
+        Example:
+            task_id = await bb.create_task(
+                mission_id="mission_123",
+                task_type="network_scan",
+                assigned_to="recon",
+                priority=8,
+                params={"target": "192.168.1.0/24"}
+            )
+        """
+        from uuid import uuid4
+        from .models import Task, TaskStatus, TaskType, SpecialistType
+        
+        # Convert priority string to int if needed
+        if isinstance(priority, str):
+            priority_map = {"critical": 10, "high": 8, "medium": 5, "low": 3}
+            priority = priority_map.get(priority.lower(), 5)
+        
+        # Convert task_type string to TaskType if needed
+        if isinstance(task_type, str):
+            try:
+                task_type = TaskType[task_type.upper()] if hasattr(TaskType, task_type.upper()) else TaskType(task_type)
+            except:
+                pass  # Keep as string if conversion fails
+        
+        # Convert assigned_to string to SpecialistType
+        if isinstance(assigned_to, str):
+            try:
+                specialist_type = SpecialistType[assigned_to.upper()] if hasattr(SpecialistType, assigned_to.upper()) else SpecialistType(assigned_to)
+            except:
+                specialist_type = SpecialistType.RECON  # Fallback
+        else:
+            specialist_type = assigned_to
+        
+        # Create Task object
+        task = Task(
+            id=uuid4(),
+            mission_id=UUID(mission_id) if len(mission_id) == 36 else UUID(int=hash(mission_id) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF),
+            type=task_type,
+            specialist=specialist_type,
+            assigned_to=str(specialist_type.value) if hasattr(specialist_type, 'value') else assigned_to,
+            priority=priority,
+            status=TaskStatus.PENDING,
+            params=params or {},
+            **kwargs
+        )
+        
+        return await self.add_task(task)
+    
     async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get task by ID."""
         return await self._get_hash(f"task:{task_id}")
+    
+    async def update_task(
+        self,
+        mission_id: str,
+        task_id: str,
+        status: Optional[str] = None,
+        progress: Optional[int] = None,
+        result: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> None:
+        """
+        Update task fields (convenience method for tests).
+        
+        Automatically handles task lifecycle transitions:
+        - PENDING → RUNNING: moves to running queue
+        - RUNNING → COMPLETED: moves to completed queue
+        - RUNNING → FAILED: moves to failed tracking
+        
+        Args:
+            mission_id: Mission ID
+            task_id: Task ID
+            status: Optional task status
+            progress: Optional progress (0-100)
+            result: Optional result data
+            **kwargs: Additional fields to update
+        """
+        from .models import TaskStatus as TS
+        
+        task_key = f"task:{task_id}"
+        pending_key = f"mission:{mission_id}:tasks:pending"
+        running_key = f"mission:{mission_id}:tasks:running"
+        completed_key = f"mission:{mission_id}:tasks:completed"
+        
+        updates = {}
+        if status is not None:
+            updates["status"] = status
+        if progress is not None:
+            updates["progress"] = progress
+        if result is not None:
+            updates["result"] = json.dumps(result)
+        updates.update(kwargs)
+        
+        # Apply updates
+        if updates:
+            await self.redis.hset(task_key, mapping=updates)
+        
+        # Handle queue transitions if status changed
+        if status:
+            status_upper = status.upper() if isinstance(status, str) else status
+            
+            # PENDING → RUNNING
+            if status_upper in ["RUNNING", TS.RUNNING.value.upper()]:
+                await self.redis.zrem(pending_key, task_key)
+                await self.redis.sadd(running_key, task_key)
+                if "started_at" not in updates:
+                    await self.redis.hset(task_key, "started_at", datetime.utcnow().isoformat())
+            
+            # RUNNING → COMPLETED
+            elif status_upper in ["COMPLETED", TS.COMPLETED.value.upper()]:
+                await self.redis.srem(running_key, task_key)
+                await self.redis.lpush(completed_key, task_key)
+                if "completed_at" not in updates:
+                    await self.redis.hset(task_key, "completed_at", datetime.utcnow().isoformat())
+            
+            # RUNNING → FAILED
+            elif status_upper in ["FAILED", TS.FAILED.value.upper()]:
+                await self.redis.srem(running_key, task_key)
+                # Could add to failed queue if needed
+                if "completed_at" not in updates:
+                    await self.redis.hset(task_key, "completed_at", datetime.utcnow().isoformat())
     
     # ═══════════════════════════════════════════════════════════
     # Lua Scripts for Atomic Operations
@@ -683,6 +1036,37 @@ class Blackboard:
         tasks = await self.redis.smembers(running_key)
         return list(tasks) if tasks else []
     
+    async def get_completed_tasks(self, mission_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all completed tasks for a mission with their data.
+        
+        Args:
+            mission_id: Mission ID
+            
+        Returns:
+            List of completed task dictionaries
+        """
+        completed_key = f"mission:{mission_id}:tasks:completed"
+        # Use lrange since complete_task uses lpush (list, not set)
+        task_keys = await self.redis.lrange(completed_key, 0, -1)
+        
+        if not task_keys:
+            return []
+        
+        tasks = []
+        for task_key in task_keys:
+            # task_key is bytes or str like "task:UUID"
+            if isinstance(task_key, bytes):
+                task_key = task_key.decode('utf-8')
+            
+            # Extract task_id from "task:UUID" format
+            task_id = task_key.replace("task:", "") if task_key.startswith("task:") else task_key
+            task_data = await self.get_task(task_id)
+            if task_data:
+                tasks.append(task_data)
+        
+        return tasks
+    
     async def requeue_task(
         self,
         mission_id: str,
@@ -865,3 +1249,124 @@ class Blackboard:
             })
         
         return parsed
+    
+    # ═══════════════════════════════════════════════════════════════
+    # Event Management (for Phase 5 Adaptation & Monitoring)
+    # ═══════════════════════════════════════════════════════════════
+    
+    async def add_event(
+        self,
+        mission_id: str,
+        event_type: str,
+        data: Dict[str, Any]
+    ) -> str:
+        """
+        Add a mission event for real-time monitoring and adaptation.
+        
+        Events are used by Phase 5 advanced features for:
+        - Real-time risk monitoring
+        - Adaptive strategy adjustment
+        - Detection alerts and response
+        - Mission timeline tracking
+        
+        Args:
+            mission_id: Mission ID
+            event_type: Type of event (detection_alert, target_discovered, etc.)
+            data: Event data payload
+            
+        Returns:
+            Event ID (Redis stream entry ID)
+            
+        Example:
+            event_id = await bb.add_event(
+                mission_id="mission_123",
+                event_type="detection_alert",
+                data={
+                    "severity": "high",
+                    "source": "ids",
+                    "message": "Suspicious activity detected"
+                }
+            )
+        """
+        event_id = await self.redis.xadd(
+            f"mission:{mission_id}:events",
+            {
+                "type": event_type,
+                "data": json.dumps(data),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
+        
+        # Also publish to pub/sub for real-time subscribers
+        await self.publish_dict(
+            f"mission:{mission_id}:events",
+            {
+                "event_id": event_id,
+                "type": event_type,
+                "data": data,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        )
+        
+        return event_id
+    
+    async def get_events(
+        self,
+        mission_id: str,
+        event_type: Optional[str] = None,
+        count: int = 100,
+        start: str = "-",
+        end: str = "+"
+    ) -> List[Dict[str, Any]]:
+        """
+        Get events from mission event stream.
+        
+        Args:
+            mission_id: Mission ID
+            event_type: Optional filter by event type
+            count: Maximum number of events to return
+            start: Start ID for range query
+            end: End ID for range query
+            
+        Returns:
+            List of events with metadata
+        """
+        events = await self.redis.xrange(
+            f"mission:{mission_id}:events",
+            min=start,
+            max=end,
+            count=count
+        )
+        
+        parsed = []
+        for entry_id, fields in events:
+            event = {
+                "id": entry_id,
+                "type": fields.get("type"),
+                "data": json.loads(fields.get("data", "{}")),
+                "timestamp": fields.get("timestamp"),
+            }
+            
+            # Filter by event type if specified
+            if event_type is None or event["type"] == event_type:
+                parsed.append(event)
+        
+        return parsed
+    
+    async def get_event_count(
+        self,
+        mission_id: str,
+        event_type: Optional[str] = None
+    ) -> int:
+        """
+        Get count of events for a mission.
+        
+        Args:
+            mission_id: Mission ID
+            event_type: Optional filter by event type
+            
+        Returns:
+            Event count
+        """
+        events = await self.get_events(mission_id, event_type=event_type)
+        return len(events)
