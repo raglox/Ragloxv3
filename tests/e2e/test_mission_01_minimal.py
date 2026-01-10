@@ -151,11 +151,11 @@ async def test_mission_01_minimal():
     logger.info("\n[PHASE 4] Initializing Workflow Orchestrator...")
     
     try:
-        # Create orchestrator WITHOUT Blackboard dependency
-        # This tests the core orchestration logic
+        # Create orchestrator WITH proper parameter names
+        # Note: 'knowledge' parameter, not 'knowledge_base'
         orchestrator = AgentWorkflowOrchestrator(
-            blackboard=None,  # Skip Blackboard for minimal test
-            knowledge_base=knowledge,
+            blackboard=None,  # Will auto-create Blackboard internally
+            knowledge=knowledge,  # Correct parameter name
             settings=settings
         )
         
@@ -175,12 +175,12 @@ async def test_mission_01_minimal():
         
         try:
             # Test 1: Verify orchestrator has required methods
-            assert hasattr(orchestrator, 'execute_mission'), "Orchestrator should have execute_mission method"
-            logger.info("✅ Orchestrator has execute_mission method")
+            assert hasattr(orchestrator, 'start_workflow'), "Orchestrator should have start_workflow method"
+            logger.info("✅ Orchestrator has start_workflow method")
             
             # Test 2: Verify knowledge integration
-            assert orchestrator.knowledge_base is not None, "Orchestrator should have knowledge base"
-            logger.info("✅ Knowledge base integrated with orchestrator")
+            assert orchestrator.knowledge is not None, "Orchestrator should have knowledge"
+            logger.info("✅ Knowledge integrated with orchestrator")
             
             # Test 3: Basic configuration check
             logger.info("✅ Orchestrator configuration validated")
